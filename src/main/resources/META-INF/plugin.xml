@@ -19,6 +19,7 @@
     <extensions defaultExtensionNs="com.intellij">
         <notificationGroup id="Teal" displayType="BALLOON"/>
         <textmate.bundleProvider implementation="com.spacylab.teal.TealTextMateBundleProvider"/>
+        <fileIconProvider implementation="com.spacylab.teal.TealFileIconProvider"/>
     </extensions>
 
     <extensions defaultExtensionNs="com.redhat.devtools.lsp4ij">
