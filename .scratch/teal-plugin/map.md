@@ -24,10 +24,10 @@ A locked architecture decision — **LSP-client** (LSP4IJ wrapping the existing 
 ## Decisions so far
 
 - [Prototype the LSP-client route](issues/01-prototype-lsp-client-route.md): works, with two non-blocking caveats — `.tl` file-type association needs a companion plugin for a proper icon (diagnostics work fine without one), and LSP4IJ 0.21.0 has an active, unrelated EDT-threading bug on save (cosmetic, settings persist). No patch to `teal-language-server` was needed. Recommends locking LSP-client.
+- [Lock the architecture decision](issues/02-lock-architecture-decision.md): locked **LSP-client** (LSP4IJ + `teal-language-server`). Native-PSI not needed — no fork/rewrite was required to hit the "works" bar the user pre-committed to. The LSP4IJ EDT bug is accepted as a known, cosmetic upstream risk, not a blocker.
 
 ## Not yet specified
 
-- Native-PSI prototype — only graduates into a ticket if [Lock the architecture decision](issues/02-lock-architecture-decision.md) concludes LSP-client failed.
 - MVP spec details for syntax highlighting and go-to-definition specifically (deferred past the architecture decision; the spec ticket will flesh these out once written).
 - Plugin naming, distribution scope beyond IntelliJ IDEA, and licensing — none of these block the architecture decision or MVP spec, revisit once those are settled.
 - Whether `tl check` or `cyan check` is the right diagnostics driver if native-PSI is ever needed (moot under LSP-client, since `teal-language-server` handles this internally).
@@ -35,3 +35,4 @@ A locked architecture decision — **LSP-client** (LSP4IJ wrapping the existing 
 ## Out of scope
 
 - JetBrains Marketplace publishing / release packaging — the project's eventual goal, but this map ends at a spec, not a shipped release. Revisit as a fresh effort once the MVP is built.
+- Native-PSI architecture (full custom lexer/PSI/parser plugin) — not needed. [Lock the architecture decision](issues/02-lock-architecture-decision.md) locked LSP-client after the prototype worked without needing a fork/rewrite, the bar the user set for even considering native-PSI.
