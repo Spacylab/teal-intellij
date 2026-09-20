@@ -1,0 +1,21 @@
+{
+  "name": "teal-textmate-bundle",
+  "description": "TextMate grammar for Teal, vendored from teal-language/vscode-teal (MIT) for use by the teal-intellij companion plugin. See LICENSE-vscode-teal for the original license.",
+  "contributes": {
+    "languages": [
+      {
+        "id": "teal",
+        "aliases": ["Teal", "tl"],
+        "extensions": [".tl"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "teal",
+        "scopeName": "source.teal",
+        "path": "./syntaxes/teal.tmLanguage.json"
+      }
+    ]
+  }
+}

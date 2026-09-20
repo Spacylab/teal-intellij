@@ -1,0 +1,35 @@
+<idea-plugin>
+    <id>com.spacylab.teal</id>
+    <name>Teal</name>
+    <vendor url="https://github.com/Spacylab/teal-intellij">Spacylab</vendor>
+
+    <description><![CDATA[
+    <p>Teal (.tl) support for IntelliJ IDEA: syntax highlighting, inline diagnostics, hover, and go-to-definition.</p>
+    <p>A thin companion plugin — all language intelligence is delegated to
+    <a href="https://github.com/redhat-developer/lsp4ij">LSP4IJ</a> wrapping
+    <a href="https://github.com/teal-language/teal-language-server">teal-language-server</a>, which must be
+    installed separately (<code>luarocks install teal-language-server</code>). Syntax highlighting reuses
+    <a href="https://github.com/teal-language/vscode-teal">vscode-teal</a>'s MIT-licensed TextMate grammar.</p>
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>org.jetbrains.plugins.textmate</depends>
+    <depends>com.redhat.devtools.lsp4ij</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <notificationGroup id="Teal" displayType="BALLOON"/>
+        <textmate.bundleProvider implementation="com.spacylab.teal.TealTextMateBundleProvider"/>
+    </extensions>
+
+    <extensions defaultExtensionNs="com.redhat.devtools.lsp4ij">
+        <server id="tealLanguageServer"
+                name="Teal Language Server"
+                factoryClass="com.spacylab.teal.TealLanguageServerFactory">
+            <description><![CDATA[
+            Wraps <a href="https://github.com/teal-language/teal-language-server">teal-language-server</a>
+            to provide diagnostics, hover, and go-to-definition for Teal (.tl) files.
+            ]]></description>
+        </server>
+        <fileNamePatternMapping patterns="*.tl" serverId="tealLanguageServer" languageId="teal"/>
+    </extensions>
+</idea-plugin>
