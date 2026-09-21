@@ -27,7 +27,7 @@ Register `teal-language-server` with LSP4IJ via its language-server extension po
 
 No further plugin code is needed for diagnostics, hover, or go-to-definition/type-definition — `teal-language-server` already advertises all of these (`hoverProvider`, `definitionProvider`, `typeDefinitionProvider`) and LSP4IJ serves them automatically once the server is registered, confirmed in the prototype.
 
-**Known limitation — Find Usages does not work.** `teal-language-server`'s advertised capabilities (`server_state.lua`) do not include `referencesProvider`. LSP4IJ wires up IntelliJ's Find Usages generically off `textDocument/references` (`LSPFindUsagesHandlerFactory`, no language filter), so with no `referencesProvider` capability it silently returns no results — this is a `teal-language-server` gap, not a plugin bug, and there is no plugin-side hook to work around it since LSP4IJ delegates entirely to server-advertised capabilities. Confirmed by hand against the built plugin: go-to-definition works, Find Usages doesn't.
+**Find Usages — plugin-side exception to "no plugin code needed".** `teal-language-server`'s advertised capabilities (`server_state.lua`) don't include `referencesProvider`, so LSP4IJ's generic Find Usages support (`LSPFindUsagesHandlerFactory`, driven off `textDocument/references`) silently returns nothing — a `teal-language-server` gap, not a plugin bug. Rather than patch that upstream project, this is solved entirely inside the plugin: `TealLanguageServerFactory` wraps the real process in `TealReferencesProxyConnectionProvider` (a `StreamConnectionProvider` adapter) around `TealReferencesProxyCore`, a JSON-RPC man-in-the-middle that (1) patches `referencesProvider: true` into the `initialize` response, and (2) answers `textDocument/references` itself — scanning the document's identifier tokens (`TealIdentifierScanner`, a lightweight lexer, not real parsing) and probing each same-named candidate via the real, already-supported `textDocument/definition`, keeping the ones that resolve to the same declaration as the cursor. Everything else passes through untouched. This is a deliberate, narrow departure from the "thin plugin, zero native intelligence" bet in [ADR 0001](../../docs/adr/0001-lsp-client-architecture-for-teal-plugin.md) — worth calling out there, not just here. Verified against the real server binary (`TealReferencesProxyCoreTest`, plus a standalone JVM harness bypassing the IDE test sandbox): correctly scopes to same-document, excludes/includes the declaration per `includeDeclaration`, doesn't leak into same-named locals in unrelated scopes, and degrades gracefully (no crash, no false matches) on field access, which the scanner doesn't understand structurally.
 
 ## Acceptance criteria
 
@@ -38,6 +38,7 @@ Verify against the real `picolo-rpg` project (or any real `.tl` project with a `
 3. Introducing a real type error (e.g. `local x: string = 5`) shows an inline diagnostic with the correct message and range.
 4. Hovering a typed symbol shows its type.
 5. Go-to-definition on a symbol reference jumps to its declaration.
+6. Find Usages on a symbol reference finds its other same-document usages (declaration excluded by default).
 
 ## Explicitly out of scope for this MVP
 
@@ -46,4 +47,4 @@ Verify against the real `picolo-rpg` project (or any real `.tl` project with a `
 - Any JetBrains IDE other than IntelliJ IDEA.
 - Native-PSI anything (lexer, parser, PSI, annotator) — rejected architecture, see [ADR 0001](../../docs/adr/0001-lsp-client-architecture-for-teal-plugin.md).
 - Completion and signature help polish — LSP4IJ will surface whatever `teal-language-server` provides by default; no plugin-side tuning in MVP.
-- Find Usages — not achievable without upstream `teal-language-server` support for `textDocument/references` (see Feature 3's known limitation above). Not an MVP acceptance criterion.
+- Find Usages across files (workspace-wide) — the references proxy (see Feature 3) is deliberately scoped to the current document only, matching how `definitions.tl`'s own symbol lookups are file-local.

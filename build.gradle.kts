@@ -20,6 +20,18 @@ dependencies {
         plugin(providers.gradleProperty("lsp4ijVersion").map { "com.redhat.devtools.lsp4ij:$it" })
         bundledPlugin("org.jetbrains.plugins.textmate")
     }
+
+    // Bundled with the plugin itself (not part of the platform's own classpath
+    // contract) for JSON-RPC message rewriting in the references proxy.
+    implementation("com.google.code.gson:gson:2.11.0")
+
+    testImplementation(platform("org.junit:junit-bom:5.10.2"))
+    testImplementation("org.junit.jupiter:junit-jupiter")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+}
+
+tasks.test {
+    useJUnitPlatform()
 }
 
 intellijPlatform {

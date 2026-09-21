@@ -4,11 +4,14 @@
     <vendor url="https://github.com/Spacylab/teal-intellij">Spacylab</vendor>
 
     <description><![CDATA[
-    <p>Teal (.tl) support for IntelliJ IDEA: syntax highlighting, inline diagnostics, hover, and go-to-definition.</p>
-    <p>A thin companion plugin — all language intelligence is delegated to
+    <p>Teal (.tl) support for IntelliJ IDEA: syntax highlighting, inline diagnostics, hover, go-to-definition, and
+    Find Usages (same-document).</p>
+    <p>A thin companion plugin — nearly all language intelligence is delegated to
     <a href="https://github.com/redhat-developer/lsp4ij">LSP4IJ</a> wrapping
     <a href="https://github.com/teal-language/teal-language-server">teal-language-server</a>, which must be
-    installed separately (<code>luarocks install teal-language-server</code>). Syntax highlighting reuses
+    installed separately (<code>luarocks install teal-language-server</code>). The one exception is Find Usages:
+    teal-language-server doesn't implement <code>textDocument/references</code>, so the plugin answers it itself by
+    probing the server's own go-to-definition on each candidate identifier. Syntax highlighting reuses
     <a href="https://github.com/teal-language/vscode-teal">vscode-teal</a>'s MIT-licensed TextMate grammar.</p>
     ]]></description>
 
@@ -28,7 +31,7 @@
                 factoryClass="com.spacylab.teal.TealLanguageServerFactory">
             <description><![CDATA[
             Wraps <a href="https://github.com/teal-language/teal-language-server">teal-language-server</a>
-            to provide diagnostics, hover, and go-to-definition for Teal (.tl) files.
+            to provide diagnostics, hover, go-to-definition, and Find Usages for Teal (.tl) files.
             ]]></description>
         </server>
         <fileNamePatternMapping patterns="*.tl" serverId="tealLanguageServer" languageId="teal"/>
