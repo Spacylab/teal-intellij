@@ -27,6 +27,8 @@ Register `teal-language-server` with LSP4IJ via its language-server extension po
 
 No further plugin code is needed for diagnostics, hover, or go-to-definition/type-definition — `teal-language-server` already advertises all of these (`hoverProvider`, `definitionProvider`, `typeDefinitionProvider`) and LSP4IJ serves them automatically once the server is registered, confirmed in the prototype.
 
+**Known limitation — Find Usages does not work.** `teal-language-server`'s advertised capabilities (`server_state.lua`) do not include `referencesProvider`. LSP4IJ wires up IntelliJ's Find Usages generically off `textDocument/references` (`LSPFindUsagesHandlerFactory`, no language filter), so with no `referencesProvider` capability it silently returns no results — this is a `teal-language-server` gap, not a plugin bug, and there is no plugin-side hook to work around it since LSP4IJ delegates entirely to server-advertised capabilities. Confirmed by hand against the built plugin: go-to-definition works, Find Usages doesn't.
+
 ## Acceptance criteria
 
 Verify against the real `picolo-rpg` project (or any real `.tl` project with a `tlconfig.lua`):
@@ -44,3 +46,4 @@ Verify against the real `picolo-rpg` project (or any real `.tl` project with a `
 - Any JetBrains IDE other than IntelliJ IDEA.
 - Native-PSI anything (lexer, parser, PSI, annotator) — rejected architecture, see [ADR 0001](../../docs/adr/0001-lsp-client-architecture-for-teal-plugin.md).
 - Completion and signature help polish — LSP4IJ will surface whatever `teal-language-server` provides by default; no plugin-side tuning in MVP.
+- Find Usages — not achievable without upstream `teal-language-server` support for `textDocument/references` (see Feature 3's known limitation above). Not an MVP acceptance criterion.
