@@ -7,7 +7,7 @@ import com.intellij.openapi.project.Project
 import com.redhat.devtools.lsp4ij.LanguageServerFactory
 import com.redhat.devtools.lsp4ij.client.LanguageClientImpl
 import com.redhat.devtools.lsp4ij.server.StreamConnectionProvider
-import com.spacylab.teal.lsp.TealReferencesProxyConnectionProvider
+import com.spacylab.teal.lsp.TealLspProxyConnectionProvider
 import java.io.File
 
 /**
@@ -65,11 +65,11 @@ class TealLanguageServerFactory : LanguageServerFactory {
             // Fails fast with a clear message in the LSP console rather than silently doing nothing.
             error("teal-language-server not found on PATH")
         }
-        // teal-language-server doesn't implement textDocument/references (no
-        // referencesProvider capability), so this proxy fakes it on top of the
+        // teal-language-server doesn't implement textDocument/references or
+        // textDocument/codeAction, so this proxy fills those gaps on top of the
         // real process instead of a raw OSProcessStreamConnectionProvider --
-        // see TealReferencesProxyConnectionProvider for how.
-        return TealReferencesProxyConnectionProvider(GeneralCommandLine(executable))
+        // see TealLspProxy for how.
+        return TealLspProxyConnectionProvider(GeneralCommandLine(executable))
     }
 
     override fun createLanguageClient(project: Project): LanguageClientImpl = LanguageClientImpl(project)

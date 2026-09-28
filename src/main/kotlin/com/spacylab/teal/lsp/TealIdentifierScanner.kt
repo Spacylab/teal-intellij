@@ -4,7 +4,7 @@ package com.spacylab.teal.lsp
  * A minimal Teal/Lua lexical scanner that finds identifier occurrences and their
  * (0-indexed, LSP-style) positions, skipping string and comment contents. This is
  * not a real parser -- just enough to enumerate candidate reference sites for
- * [TealReferencesProxyConnectionProvider], which disambiguates candidates by
+ * [TealLspProxyConnectionProvider], which disambiguates candidates by
  * asking the real language server whether each one resolves to the same
  * declaration (via textDocument/definition), rather than by understanding scope
  * itself.

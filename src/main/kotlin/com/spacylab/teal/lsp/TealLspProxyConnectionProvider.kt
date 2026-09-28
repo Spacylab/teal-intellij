@@ -10,17 +10,17 @@ import java.util.concurrent.CopyOnWriteArrayList
 
 /**
  * LSP4IJ `StreamConnectionProvider` adapter: launches the real
- * `teal-language-server` process and wires it up through [TealReferencesProxyCore],
- * which fakes `textDocument/references` support on top of it (see its doc for
- * why). All the actual proxying logic lives there, kept free of IntelliJ/LSP4IJ
+ * `teal-language-server` process and wires it up through [TealLspProxy],
+ * which fills capability gaps (references, code actions) on top of it (see its
+ * doc for why). All the actual proxying logic lives there, kept free of IntelliJ/LSP4IJ
  * types so it can be tested directly against the real server binary.
  */
-class TealReferencesProxyConnectionProvider(
+class TealLspProxyConnectionProvider(
     private val commandLine: GeneralCommandLine,
 ) : StreamConnectionProvider {
 
     private var process: Process? = null
-    private var core: TealReferencesProxyCore? = null
+    private var core: TealLspProxy? = null
     private val logErrorHandlers = CopyOnWriteArrayList<LanguageServerLogErrorHandler>()
 
     override fun start() {
@@ -30,7 +30,7 @@ class TealReferencesProxyConnectionProvider(
             throw CannotStartProcessException(e)
         }
         process = proc
-        core = TealReferencesProxyCore(proc.inputStream, proc.outputStream).also { it.start() }
+        core = TealLspProxy(proc.inputStream, proc.outputStream).also { it.start() }
 
         // The child's stderr must be drained continuously: if it's never read and
         // the OS pipe buffer fills (teal-language-server does log warnings/traces
@@ -38,7 +38,7 @@ class TealReferencesProxyConnectionProvider(
         // its own stdin/stdout processing too, silently hanging every LSP request.
         // OSProcessStreamConnectionProvider/OSProcessHandler normally do this for
         // free; this proxy owns the process directly, so it has to do it itself.
-        Thread({ drainStderr(proc) }, "teal-refs-proxy-stderr").apply { isDaemon = true }.start()
+        Thread({ drainStderr(proc) }, "teal-lsp-proxy-stderr").apply { isDaemon = true }.start()
     }
 
     override fun getInputStream() = core!!.clientInput

@@ -6,8 +6,10 @@ import com.google.gson.JsonElement
 import com.google.gson.JsonNull
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
+import java.net.URI
 import java.nio.channels.Channels
 import java.nio.channels.Pipe
 import java.util.concurrent.CompletableFuture
@@ -16,10 +18,11 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * Sits between an LSP client (LSP4IJ, in production) and the real
- * `teal-language-server` process and fakes `textDocument/references` support on
- * top of it.
+ * The LSP proxy (see CONTEXT.md): sits between an LSP client (LSP4IJ, in
+ * production) and the real `teal-language-server` process, and fills gaps in
+ * the server's capabilities by answering those requests itself.
  *
+ * `textDocument/references`:
  * teal-language-server doesn't implement `textDocument/references` (no
  * `referencesProvider` capability -- see server_state.lua upstream), so LSP4IJ's
  * generic Find Usages support never fires for .tl files. This proxy answers
@@ -27,15 +30,21 @@ import java.util.concurrent.atomic.AtomicLong
  * tokens (a lightweight scanner, not real parsing -- see [TealIdentifierScanner]),
  * then probes each same-named candidate with the real, already-supported
  * `textDocument/definition` request, keeping the ones that resolve to the same
- * declaration as the symbol under the cursor. Every other message passes through
- * to the real process untouched.
+ * declaration as the symbol under the cursor.
+ *
+ * `textDocument/codeAction`: teal-language-server has no `codeActionProvider`
+ * either. This proxy answers it with the missing-require quick fix -- for each
+ * `unknown type X` diagnostic, one `Add require("<module>")` action per
+ * workspace module declaring a global `X` (see [TealMissingRequire]).
+ *
+ * Every other message passes through to the real process untouched.
  *
  * Deliberately has no IntelliJ/LSP4IJ platform dependency, so it can be exercised
  * with a plain JUnit test against the real server binary via raw process streams
- * -- [TealReferencesProxyConnectionProvider] is the thin adapter that wires this
+ * -- [TealLspProxyConnectionProvider] is the thin adapter that wires this
  * up as an LSP4IJ `StreamConnectionProvider`.
  */
-class TealReferencesProxyCore(
+class TealLspProxy(
     private val realServerInput: InputStream,
     private val realServerOutput: OutputStream,
 ) {
@@ -58,6 +67,11 @@ class TealReferencesProxyCore(
     // notification carries the complete text, not a diff.
     private val documentText = ConcurrentHashMap<String, String>()
 
+    // Taken from the client's initialize request; code actions scan it for
+    // declarations and derive module names relative to it.
+    @Volatile
+    private var workspaceRoot: File? = null
+
     // What the client reads server messages from. Backed by java.nio.channels.Pipe
     // rather than java.io.Piped(In|Out)putStream: this proxy has more than one
     // thread writing here (the long-lived pumpFromServer thread, and a
@@ -76,8 +90,8 @@ class TealReferencesProxyCore(
     private val fromClientSource: InputStream = Channels.newInputStream(fromClientPipe.source())
 
     fun start() {
-        Thread(::pumpFromClient, "teal-refs-proxy-outgoing").apply { isDaemon = true }.start()
-        Thread(::pumpFromServer, "teal-refs-proxy-incoming").apply { isDaemon = true }.start()
+        Thread(::pumpFromClient, "teal-lsp-proxy-outgoing").apply { isDaemon = true }.start()
+        Thread(::pumpFromServer, "teal-lsp-proxy-incoming").apply { isDaemon = true }.start()
     }
 
     @Volatile
@@ -108,6 +122,16 @@ class TealReferencesProxyCore(
                 }
 
                 when (method) {
+                    "initialize" -> {
+                        workspaceRoot = workspaceRootFromInitialize(json)
+                        LspFraming.writeMessage(realServerOutput, GSON.toJson(json))
+                    }
+                    "textDocument/codeAction" -> {
+                        val requestId = idElement ?: JsonNull.INSTANCE
+                        Thread({ handleCodeAction(requestId, json) }, "teal-lsp-proxy-request")
+                            .apply { isDaemon = true }
+                            .start()
+                    }
                     "textDocument/didOpen", "textDocument/didChange" -> {
                         trackDocumentText(json)
                         LspFraming.writeMessage(realServerOutput, GSON.toJson(json))
@@ -118,7 +142,7 @@ class TealReferencesProxyCore(
                     }
                     "textDocument/references" -> {
                         val requestId = idElement ?: JsonNull.INSTANCE
-                        Thread({ handleReferences(requestId, json) }, "teal-refs-proxy-request")
+                        Thread({ handleReferences(requestId, json) }, "teal-lsp-proxy-request")
                             .apply { isDaemon = true }
                             .start()
                     }
@@ -127,7 +151,7 @@ class TealReferencesProxyCore(
             }
         } catch (e: Throwable) {
             if (!stopped) {
-                System.err.println("[teal-refs-proxy] outgoing pump died: $e")
+                System.err.println("[teal-lsp-proxy] outgoing pump died: $e")
                 e.printStackTrace()
             }
         }
@@ -179,7 +203,7 @@ class TealReferencesProxyCore(
             }
         } catch (e: Throwable) {
             if (!stopped) {
-                System.err.println("[teal-refs-proxy] incoming pump died: $e")
+                System.err.println("[teal-lsp-proxy] incoming pump died: $e")
                 e.printStackTrace()
             }
         }
@@ -190,6 +214,7 @@ class TealReferencesProxyCore(
         val capabilities = result.getAsJsonObject("capabilities")
             ?: JsonObject().also { result.add("capabilities", it) }
         capabilities.addProperty("referencesProvider", true)
+        capabilities.addProperty("codeActionProvider", true)
     }
 
     // --- textDocument/references -----------------------------------------------
@@ -198,7 +223,7 @@ class TealReferencesProxyCore(
         try {
             handleReferencesUnsafe(requestId, request)
         } catch (e: Throwable) {
-            System.err.println("[teal-refs-proxy] references handler died: $e")
+            System.err.println("[teal-lsp-proxy] references handler died: $e")
             e.printStackTrace()
             replyResult(requestId, JsonNull.INSTANCE)
         }
@@ -267,6 +292,79 @@ class TealReferencesProxyCore(
 
         replyResult(requestId, locations)
     }
+
+    // --- textDocument/codeAction -----------------------------------------------
+
+    private fun handleCodeAction(requestId: JsonElement, request: JsonObject) {
+        val actions = try {
+            missingRequireActions(request)
+        } catch (e: Throwable) {
+            System.err.println("[teal-lsp-proxy] codeAction handler died: $e")
+            e.printStackTrace()
+            JsonArray()
+        }
+        replyResult(requestId, actions)
+    }
+
+    private fun missingRequireActions(request: JsonObject): JsonArray {
+        val actions = JsonArray()
+        val root = workspaceRoot ?: return actions
+        val uri = documentUri(request) ?: return actions
+        val context = request.getAsJsonObject("params")?.getAsJsonObject("context") ?: return actions
+
+        val only = context.getAsJsonArray("only")?.map { it.asString }
+        if (only != null && only.none { it == "quickfix" || "quickfix".startsWith("$it.") }) return actions
+
+        val text = documentText[uri] ?: return actions
+        val alreadyRequired = TealMissingRequire.requiredModules(text)
+        val line = TealMissingRequire.insertionLine(text)
+        val file = fileFromUri(uri)
+
+        for (diagnosticElement in context.getAsJsonArray("diagnostics") ?: JsonArray()) {
+            val diagnostic = diagnosticElement.asJsonObject
+            val message = diagnostic.get("message")?.takeIf { it.isJsonPrimitive }?.asString ?: continue
+            val typeName = TealMissingRequire.unknownTypeName(message) ?: continue
+
+            for (declaringFile in TealMissingRequire.findGlobalDeclarations(root, typeName, file)) {
+                val module = TealMissingRequire.moduleName(root, declaringFile)
+                if (module in alreadyRequired) continue
+                actions.add(addRequireAction(uri, diagnostic, module, line))
+            }
+        }
+        return actions
+    }
+
+    private fun addRequireAction(uri: String, diagnostic: JsonObject, module: String, line: Int): JsonObject {
+        val statement = TealMissingRequire.requireStatement(module)
+        val position = JsonObject().apply { addProperty("line", line); addProperty("character", 0) }
+        val textEdit = JsonObject().apply {
+            add("range", JsonObject().apply { add("start", position); add("end", position.deepCopy()) })
+            addProperty("newText", statement + "\n")
+        }
+        return JsonObject().apply {
+            addProperty("title", "Add $statement")
+            addProperty("kind", "quickfix")
+            add("diagnostics", JsonArray().apply { add(diagnostic) })
+            add("edit", JsonObject().apply {
+                add("changes", JsonObject().apply { add(uri, JsonArray().apply { add(textEdit) }) })
+            })
+        }
+    }
+
+    private fun workspaceRootFromInitialize(request: JsonObject): File? {
+        val params = request.getAsJsonObject("params") ?: return null
+        val uri = params.get("rootUri")?.takeIf { it.isJsonPrimitive }?.asString
+            ?: params.getAsJsonArray("workspaceFolders")?.firstOrNull()
+                ?.asJsonObject?.get("uri")?.takeIf { it.isJsonPrimitive }?.asString
+        return uri?.let(::fileFromUri)
+            ?: params.get("rootPath")?.takeIf { it.isJsonPrimitive }?.asString?.let(::File)
+    }
+
+    // LSP4IJ sends percent-encoded URIs; teal-language-server's own form is a raw
+    // "file://" + path. URI parsing handles the former, the prefix strip the latter.
+    private fun fileFromUri(uri: String): File? =
+        runCatching { File(URI(uri)) }.getOrNull()
+            ?: uri.takeIf { it.startsWith("file://") }?.let { File(it.removePrefix("file://")) }
 
     private fun sendProbeRequest(method: String, uri: String, line: Int, character: Int): CompletableFuture<JsonObject> {
         val id = nextProxyId.getAndIncrement()

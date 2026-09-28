@@ -16,19 +16,20 @@ import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Integration test against the real `teal-language-server` binary (skipped if
- * it isn't on PATH). Verifies [TealReferencesProxyCore]: fakes referencesProvider
- * in the initialize response, and answers textDocument/references itself by
- * probing textDocument/definition -- the only part of this that's actually novel
- * versus the real server's own behavior. No IntelliJ/LSP4IJ types involved, so
+ * it isn't on PATH). Verifies [TealLspProxy]: fakes referencesProvider and
+ * codeActionProvider in the initialize response, answers textDocument/references
+ * itself by probing textDocument/definition, and answers textDocument/codeAction
+ * with the missing-require quick fix -- the only parts of this that are actually
+ * novel versus the real server's own behavior. No IntelliJ/LSP4IJ types involved, so
  * this runs as a plain JUnit test with no platform sandbox required.
  */
 @Timeout(30, unit = TimeUnit.SECONDS)
-class TealReferencesProxyCoreTest {
+class TealLspProxyTest {
 
     private val gson = Gson()
     private val nextId = AtomicInteger(1)
     private lateinit var process: Process
-    private lateinit var core: TealReferencesProxyCore
+    private lateinit var core: TealLspProxy
     private lateinit var projectRoot: File
 
     @BeforeEach
@@ -36,14 +37,14 @@ class TealReferencesProxyCoreTest {
         val executable = findOnPath("teal-language-server")
         assumeTrue(executable != null, "teal-language-server not found on PATH; skipping")
 
-        projectRoot = File.createTempFile("teal-refs-proxy-test", "").apply {
+        projectRoot = File.createTempFile("teal-lsp-proxy-test", "").apply {
             delete()
             mkdirs()
             deleteOnExit()
         }
 
         process = ProcessBuilder(executable).redirectErrorStream(false).start()
-        core = TealReferencesProxyCore(process.inputStream, process.outputStream).also { it.start() }
+        core = TealLspProxy(process.inputStream, process.outputStream).also { it.start() }
 
         sendRequest("initialize", mapOf(
             "processId" to null,
@@ -53,12 +54,15 @@ class TealReferencesProxyCoreTest {
         val initResponse = readResponse()
         send(mapOf("jsonrpc" to "2.0", "method" to "initialized", "params" to emptyMap<String, Any>()))
 
-        // The one thing this proxy exists to fake.
+        // The capabilities this proxy exists to fake.
+        val capabilities = initResponse.getAsJsonObject("result").getAsJsonObject("capabilities")
         assertTrue(
-            initResponse.getAsJsonObject("result")
-                .getAsJsonObject("capabilities")
-                .get("referencesProvider").asBoolean,
+            capabilities.get("referencesProvider").asBoolean,
             "expected the proxy to add referencesProvider: true to the initialize response",
+        )
+        assertTrue(
+            capabilities.get("codeActionProvider").asBoolean,
+            "expected the proxy to add codeActionProvider: true to the initialize response",
         )
     }
 
@@ -151,7 +155,150 @@ class TealReferencesProxyCoreTest {
         assertEquals(0, locations.size(), "field-access reference resolution isn't exact, but must not crash or false-match")
     }
 
+    // --- missing-require quick fix -------------------------------------------
+
+    private val playerRecord = "global record Player\n  name: string\nend\n"
+
+    private val usesPlayer = """
+        require("src.engine.types")
+        -- require("src.entities.player")
+
+        local function greet(p: Player): string
+          return p.name
+        end
+        return greet
+    """.trimIndent()
+
+    @Test
+    fun `offers one add-require action for a global record declared in another module`() {
+        writeFile("src/engine/types.tl", "global record Unrelated\nend\n")
+        writeFile("src/entities/player.tl", playerRecord)
+        val (uri, diagnostics) = openWorkspaceDocument("src/engine/run.tl", usesPlayer)
+
+        val actions = getCodeActions(uri, unknownTypeDiagnostic(diagnostics))
+
+        assertEquals(1, actions.size())
+        val action = actions[0].asJsonObject
+        assertEquals("Add require(\"src.entities.player\")", action.get("title").asString)
+        assertEquals("quickfix", action.get("kind").asString)
+        val edit = singleEdit(action, uri)
+        assertEquals("require(\"src.entities.player\")\n", edit.get("newText").asString)
+        // Right after the last real require (line 0); the commented-out one doesn't count.
+        assertEquals(1,edit.getAsJsonObject("range").getAsJsonObject("start").get("line").asInt)
+    }
+
+    @Test
+    fun `offers one action per module when several declare the same global`() {
+        writeFile("src/engine/types.tl", "")
+        writeFile("src/entities/player.tl", playerRecord)
+        writeFile("src/legacy/player.tl", playerRecord)
+        val (uri, diagnostics) = openWorkspaceDocument("src/engine/run.tl", usesPlayer)
+
+        val titles = getCodeActions(uri, unknownTypeDiagnostic(diagnostics))
+            .map { it.asJsonObject.get("title").asString }
+
+        assertEquals(
+            listOf("Add require(\"src.entities.player\")", "Add require(\"src.legacy.player\")"),
+            titles,
+        )
+    }
+
+    @Test
+    fun `offers nothing for a local record returned by its module`() {
+        writeFile("src/engine/types.tl", "")
+        writeFile("src/entities/player.tl", "local record Player\n  name: string\nend\nreturn Player\n")
+        val (uri, diagnostics) = openWorkspaceDocument("src/engine/run.tl", usesPlayer)
+
+        assertEquals(0, getCodeActions(uri, unknownTypeDiagnostic(diagnostics)).size())
+    }
+
+    @Test
+    fun `does not offer a module the file already requires`() {
+        writeFile("src/engine/types.tl", "")
+        writeFile("src/entities/player.tl", playerRecord)
+        val (uri, _) = openWorkspaceDocument(
+            "src/engine/run.tl",
+            usesPlayer.replace("-- require(\"src.entities.player\")", "require(\"src.entities.player\")"),
+        )
+        // The server may not report the error here, so feed a synthetic one:
+        // the proxy must still skip the already-required module.
+        val synthetic = gson.toJsonTree(mapOf(
+            "range" to mapOf(
+                "start" to mapOf("line" to 3, "character" to 24),
+                "end" to mapOf("line" to 3, "character" to 30),
+            ),
+            "message" to "unknown type Player",
+        )).asJsonObject
+
+        assertEquals(0, getCodeActions(uri, synthetic).size())
+    }
+
+    @Test
+    fun `applying the action clears the unknown type diagnostic`() {
+        writeFile("src/engine/types.tl", "")
+        writeFile("src/entities/player.tl", playerRecord)
+        val (uri, diagnostics) = openWorkspaceDocument("src/engine/run.tl", usesPlayer)
+        val edit = singleEdit(getCodeActions(uri, unknownTypeDiagnostic(diagnostics))[0].asJsonObject, uri)
+
+        val lines = usesPlayer.lines().toMutableList()
+        val insertAt = edit.getAsJsonObject("range").getAsJsonObject("start").get("line").asInt
+        lines.add(insertAt, edit.get("newText").asString.removeSuffix("\n"))
+        send(mapOf(
+            "jsonrpc" to "2.0",
+            "method" to "textDocument/didChange",
+            "params" to mapOf(
+                "textDocument" to mapOf("uri" to uri, "version" to 2),
+                "contentChanges" to listOf(mapOf("text" to lines.joinToString("\n"))),
+            ),
+        ))
+        val after = readDiagnostics(uri)
+
+        assertTrue(
+            after.none { it.get("message").asString.startsWith("unknown type") },
+            "expected no unknown type diagnostics after the edit, got: $after",
+        )
+    }
+
     // --- helpers -----------------------------------------------------------
+
+    private fun writeFile(path: String, text: String): File =
+        File(projectRoot, path).apply { parentFile.mkdirs(); writeText(text) }
+
+    // Like openDocument, but the file also exists on disk under the workspace
+    // (so the server can resolve requires relative to it) and the diagnostics are kept.
+    private fun openWorkspaceDocument(path: String, text: String): Pair<String, List<JsonObject>> {
+        val uri = fileUri(writeFile(path, text))
+        send(mapOf(
+            "jsonrpc" to "2.0",
+            "method" to "textDocument/didOpen",
+            "params" to mapOf(
+                "textDocument" to mapOf(
+                    "uri" to uri, "languageId" to "teal", "version" to 1, "text" to text,
+                ),
+            ),
+        ))
+        return uri to readDiagnostics(uri)
+    }
+
+    private fun readDiagnostics(uri: String): List<JsonObject> =
+        readUntil {
+            it.get("method")?.asString == "textDocument/publishDiagnostics" &&
+                it.getAsJsonObject("params").get("uri").asString == uri
+        }.getAsJsonObject("params").getAsJsonArray("diagnostics").map { it.asJsonObject }
+
+    private fun unknownTypeDiagnostic(diagnostics: List<JsonObject>): JsonObject =
+        diagnostics.singleOrNull { it.get("message").asString == "unknown type Player" }
+            ?: error("expected exactly one 'unknown type Player' diagnostic, got: $diagnostics")
+
+    private fun getCodeActions(uri: String, diagnostic: JsonObject) =
+        readResponse(sendRequest("textDocument/codeAction", mapOf(
+            "textDocument" to mapOf("uri" to uri),
+            "range" to diagnostic.get("range"),
+            "context" to mapOf("diagnostics" to listOf(diagnostic)),
+        ))).get("result").asJsonArray
+
+    private fun singleEdit(action: JsonObject, uri: String): JsonObject =
+        action.getAsJsonObject("edit").getAsJsonObject("changes").getAsJsonArray(uri).single().asJsonObject
 
     private fun findOnPath(name: String): String? =
         System.getenv("PATH")?.split(File.pathSeparatorChar)

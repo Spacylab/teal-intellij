@@ -36,3 +36,18 @@ _Avoid_: "the grammar" alone (ambiguous with Teal's own language grammar).
 
 **MVP surface**
 The feature set that delivers real daily-use value for the locked LSP-client architecture: `.tl` file-type association, syntax highlighting (via the TextMate route), inline diagnostics, hover, and go-to-definition. Distinct from a **publishable release** (JetBrains Marketplace-ready — polish, docs, versioning), which is an eventual goal but explicitly out of scope for the MVP surface.
+
+**LSP proxy**
+The companion plugin's man-in-the-middle between LSP4IJ and teal-language-server. It advertises capabilities the server lacks and answers those requests itself, reusing the server's own answers where it can. It is the one sanctioned home for plugin-side language intelligence (see the amendments to [ADR 0001](docs/adr/0001-lsp-client-architecture-for-teal-plugin.md)).
+_Avoid_: "references proxy" (its original, now too narrow name).
+
+**require**
+Teal's only way to bring another module into scope; Teal has no `import` statement. A **bare require** (`require("src.entities.player")`, result unassigned) is loaded only for its side effect of declaring **global** types and values.
+_Avoid_: "import" when precision matters (acceptable in casual UI wording).
+
+**module name**
+The dotted string passed to `require`, derived from a `.tl` file's path relative to the workspace root (`src/entities/player.tl` → `src.entities.player`).
+
+**missing-require quick fix**
+The Alt+Enter fix offered on an `unknown type X` diagnostic: it adds a bare require of each module that declares a global `X`. It does not handle local, module-returned types; bringing those into scope would mean rewriting the usage, not just adding a require.
+_Avoid_: "auto-import" (suggests IDE-wide import management that doesn't exist here).
