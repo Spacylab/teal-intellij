@@ -6,6 +6,7 @@
 local tl = require("tl")
 local json = require("json")
 local lookup = require("lookup")
+local requires = require("requires")
 
 local codes = tl.typecodes
 local features = {}
@@ -147,17 +148,21 @@ function features.hover(workspace, doc, position)
    return { contents = { kind = "markdown", value = text }, range = token_range(tokens[i]) }
 end
 
-function features.definition(workspace, doc, position)
-   local tokens, i = identifier_at(doc, position)
-   if not tokens then return nil end
-   local tr = workspace:type_report()
+-- Where the identifier at tokens[i] was declared, as an LSP Location, or nil.
+local function definition_at(workspace, doc, tr, tokens, i)
    local tk = tokens[i]
    local member = lookup.is_member_op(tokens, i - 1)
    local parent = member and tokens[i - 2] and tokens[i - 2].kind == "identifier" and i - 2
 
    if not member then
       local dy, dx = lookup.declaration(tr, doc.path, tk.tk, tk.y, tk.x)
-      if dy then return workspace:location(doc.path, dy, dx, doc) end
+      if dy then
+         -- tl records `local function f` at `local`; land on the name itself.
+         local d = lookup.token_at(tokens, dy, dx)
+         while d and tokens[d].y == dy and tokens[d].tk ~= tk.tk do d = d + 1 end
+         if d and tokens[d] and tokens[d].y == dy then dx = tokens[d].x end
+         return workspace:location(doc.path, dy, dx, doc)
+      end
    end
 
    if parent then
@@ -189,6 +194,94 @@ function features.definition(workspace, doc, position)
    local t = tr.types[lookup.type_at_token(tr, doc.path, tokens, i) or -1]
    if t and t.ref then t = lookup.resolve(tr, t.ref) end
    return t and workspace:location(t.file, t.y, t.x, doc)
+end
+
+function features.definition(workspace, doc, position)
+   local check = doc.check
+   if not check or not check.tokens then return nil end
+
+   -- A require's string literal, quotes included: the top of the required
+   -- module's file (ticket 05).
+   local y, x = tl_pos(position)
+   local at = lookup.token_at(check.tokens, y, x)
+   local module = at and requires.module_at(check.tokens, at)
+   if module then
+      local file = workspace.root and requires.resolve(workspace.root, module)
+      return file and workspace:location(file, 1, 1, doc)
+   end
+
+   local tokens, i = identifier_at(doc, position)
+   if not tokens then return nil end
+   return definition_at(workspace, doc, workspace:type_report(), tokens, i)
+end
+
+-- Find Usages, within the current document: every same-named identifier that
+-- resolves to the same place as the one at the cursor. The declaration site
+-- is the occurrence its own definition points at.
+function features.references(workspace, doc, position, include_declaration)
+   local tokens, i = identifier_at(doc, position)
+   if not tokens then return nil end
+   local tr = workspace:type_report()
+   local target = definition_at(workspace, doc, tr, tokens, i)
+   if not target then return nil end
+
+   local out = json.array()
+   for k, tk in ipairs(tokens) do
+      if tk.kind == "identifier" and tk.tk == tokens[i].tk then
+         local loc = definition_at(workspace, doc, tr, tokens, k)
+         if loc and loc.uri == target.uri
+            and loc.range.start.line == target.range.start.line
+            and loc.range.start.character == target.range.start.character then
+            local is_declaration = loc.uri == doc.uri
+               and loc.range.start.line == tk.y - 1 and loc.range.start.character == tk.x - 1
+            if include_declaration or not is_declaration then
+               out[#out + 1] = { uri = doc.uri, range = token_range(tk) }
+            end
+         end
+      end
+   end
+   return out
+end
+
+-- The missing-require quick fix (ticket 04): for each `unknown type X`
+-- diagnostic, one "Add require(...)" action per workspace module declaring a
+-- global X that this file doesn't already require.
+function features.code_action(workspace, doc, context)
+   local actions = json.array()
+   if not workspace.root or type(context) ~= "table" then return actions end
+
+   local only = context.only
+   if type(only) == "table" then
+      local wanted = false
+      for _, kind in ipairs(only) do
+         if kind == "quickfix" or ("quickfix"):sub(1, #kind + 1) == kind .. "." then wanted = true end
+      end
+      if not wanted then return actions end
+   end
+
+   local already = requires.required_modules(doc.text)
+   local line = requires.insertion_line(doc.text)
+   local at = { line = line, character = 0 }
+   for _, diagnostic in ipairs(context.diagnostics or {}) do
+      local name = type(diagnostic.message) == "string" and requires.unknown_type_name(diagnostic.message)
+      if name then
+         for _, file in ipairs(requires.find_global_declarations(workspace.root, name, doc.path)) do
+            local module = requires.module_name(workspace.root, file)
+            if not already[module] then
+               local statement = requires.statement(module)
+               actions[#actions + 1] = {
+                  title = "Add " .. statement,
+                  kind = "quickfix",
+                  diagnostics = json.array({ diagnostic }),
+                  edit = { changes = { [doc.uri] = json.array({
+                     { range = { start = at, ["end"] = at }, newText = statement .. "\n" },
+                  }) } },
+               }
+            end
+         end
+      end
+   end
+   return actions
 end
 
 function features.type_definition(workspace, doc, position)

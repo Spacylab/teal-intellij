@@ -5,15 +5,13 @@
 
     <description><![CDATA[
     <p>Teal (.tl) support for IntelliJ IDEA: syntax highlighting, inline diagnostics, hover, go-to-definition
-    (including from a <code>require</code> string to the module's file), Find Usages (same-document), and a quick fix that adds the missing <code>require</code> for an unknown global
+    (including from a <code>require</code> string to the module's file), type definition, completion, signature help,
+    Find Usages (same-document), and a quick fix that adds the missing <code>require</code> for an unknown global
     type.</p>
-    <p>A thin companion plugin — nearly all language intelligence is delegated to
-    <a href="https://github.com/redhat-developer/lsp4ij">LSP4IJ</a> wrapping
-    <a href="https://github.com/teal-language/teal-language-server">teal-language-server</a>, which must be
-    installed separately (<code>luarocks install teal-language-server</code>). The exceptions are Find Usages, the
-    missing-require quick fix, and go-to-definition on a <code>require</code> string: teal-language-server doesn't
-    implement <code>textDocument/references</code> or <code>textDocument/codeAction</code>, and only resolves
-    definitions of identifiers, so the plugin answers those itself. Syntax highlighting reuses
+    <p>Language intelligence comes from a small language server bundled with the plugin and built on the
+    <a href="https://github.com/teal-language/tl">tl</a> compiler, run through
+    <a href="https://github.com/redhat-developer/lsp4ij">LSP4IJ</a>. It needs Lua and the <code>tl</code> rock
+    installed (<code>luarocks install tl</code>). Syntax highlighting reuses
     <a href="https://github.com/teal-language/vscode-teal">vscode-teal</a>'s MIT-licensed TextMate grammar.</p>
     ]]></description>
 
@@ -28,12 +26,13 @@
     </extensions>
 
     <extensions defaultExtensionNs="com.redhat.devtools.lsp4ij">
+        <!-- The id predates the bundled server; it is kept so users' LSP4IJ settings still apply. -->
         <server id="tealLanguageServer"
-                name="Teal Language Server"
+                name="Teal"
                 factoryClass="com.spacylab.teal.TealLanguageServerFactory">
             <description><![CDATA[
-            Wraps <a href="https://github.com/teal-language/teal-language-server">teal-language-server</a>
-            to provide diagnostics, hover, go-to-definition, Find Usages, and quick fixes for Teal (.tl) files.
+            The Teal language server bundled with this plugin, built on the <code>tl</code> library. Runs with your
+            <code>lua</code> interpreter and needs the <code>tl</code> rock (<code>luarocks install tl</code>).
             ]]></description>
         </server>
         <fileNamePatternMapping patterns="*.tl" serverId="tealLanguageServer" languageId="teal"/>

@@ -5,7 +5,6 @@ import com.google.gson.JsonArray
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
-import com.spacylab.teal.lsp.LspFraming
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -335,6 +334,212 @@ class TealServerTest {
         assertEquals(1, help.get("activeParameter").asInt)
     }
 
+    // --- references (Find Usages) ------------------------------------------------
+
+    @Test
+    fun `references of a local variable find its usages, excluding the declaration by default`() {
+        start()
+        val uri = open("refs.tl", """
+            local function f(): number
+              local x = 1
+              return x
+            end
+            local function g(): number
+              local x = 2
+              return x + x
+            end
+        """.trimIndent())
+        diagnosticsFor(uri)
+
+        // "  local x = 1" -> 'x' at 1:8
+        val locations = references(uri, line = 1, character = 8, includeDeclaration = false)
+        assertEquals(listOf(2), locations.map { it.first }, "expected only the usage inside f, not g's unrelated x")
+    }
+
+    @Test
+    fun `references include the declaration when asked`() {
+        start()
+        val uri = open("refs.tl", "local x = 1\nprint(x)\n")
+        diagnosticsFor(uri)
+
+        assertEquals(listOf(0 to 6, 1 to 6), references(uri, line = 1, character = 6, includeDeclaration = true))
+    }
+
+    @Test
+    fun `references of an unused local function are empty, not just the declaration`() {
+        start()
+        val uri = open("refs.tl", """
+            local function f(): number
+              return 1
+            end
+            local function unused(): number
+              return 2
+            end
+            return f
+        """.trimIndent())
+        diagnosticsFor(uri)
+
+        assertEquals(emptyList<Pair<Int, Int>>(), references(uri, line = 3, character = 15, includeDeclaration = false))
+    }
+
+    @Test
+    fun `references of a field access find the same field on the same type only`() {
+        start()
+        val uri = open("refs.tl", """
+            local record Point
+              x: number
+            end
+            local record Other
+              x: number
+            end
+            local p: Point = { x = 1 }
+            local o: Other = { x = 2 }
+            print(p.x, o.x, p.x)
+        """.trimIndent())
+        diagnosticsFor(uri)
+
+        // "print(p.x, o.x, p.x)" -> the first p.x at 8:8
+        assertEquals(listOf(8 to 8, 8 to 18), references(uri, line = 8, character = 8, includeDeclaration = false))
+    }
+
+    // --- missing-require quick fix ---------------------------------------------------
+
+    @Test
+    fun `offers one add-require action for a global record declared in another module`() {
+        start()
+        writeFile("src/engine/types.tl", "global record Unrelated\nend\n")
+        writeFile("src/entities/player.tl", PLAYER_RECORD)
+        val (uri, diagnostics) = openWorkspaceDocument("src/engine/run.tl", USES_PLAYER)
+
+        val actions = codeActions(uri, unknownTypeDiagnostic(diagnostics))
+
+        assertEquals(1, actions.size)
+        val action = actions[0]
+        assertEquals("Add require(\"src.entities.player\")", action.get("title").asString)
+        assertEquals("quickfix", action.get("kind").asString)
+        val edit = singleEdit(action, uri)
+        assertEquals("require(\"src.entities.player\")\n", edit.get("newText").asString)
+        // Right after the last real require (line 0); the commented-out one doesn't count.
+        assertEquals(1, edit.getAsJsonObject("range").getAsJsonObject("start").get("line").asInt)
+    }
+
+    @Test
+    fun `offers one action per module when several declare the same global`() {
+        start()
+        writeFile("src/engine/types.tl", "")
+        writeFile("src/entities/player.tl", PLAYER_RECORD)
+        writeFile("src/legacy/player.tl", PLAYER_RECORD)
+        val (uri, diagnostics) = openWorkspaceDocument("src/engine/run.tl", USES_PLAYER)
+
+        assertEquals(
+            listOf("Add require(\"src.entities.player\")", "Add require(\"src.legacy.player\")"),
+            codeActions(uri, unknownTypeDiagnostic(diagnostics)).map { it.get("title").asString },
+        )
+    }
+
+    @Test
+    fun `offers nothing for a local record returned by its module, or from a hidden directory`() {
+        start()
+        writeFile("src/engine/types.tl", "")
+        writeFile("src/entities/player.tl", "local record Player\n  name: string\nend\nreturn Player\n")
+        writeFile(".scratch/player.tl", PLAYER_RECORD)
+        val (uri, diagnostics) = openWorkspaceDocument("src/engine/run.tl", USES_PLAYER)
+
+        assertEquals(0, codeActions(uri, unknownTypeDiagnostic(diagnostics)).size)
+    }
+
+    @Test
+    fun `does not offer a module the file already requires`() {
+        start()
+        writeFile("src/engine/types.tl", "")
+        writeFile("src/entities/player.tl", PLAYER_RECORD)
+        val (uri, _) = openWorkspaceDocument(
+            "src/engine/run.tl",
+            USES_PLAYER.replace("-- require(\"src.entities.player\")", "require(\"src.entities.player\")"),
+        )
+        // The file now type-checks, so feed a synthetic diagnostic: the module
+        // must still be skipped because it is already required.
+        val synthetic = gson.toJsonTree(mapOf(
+            "range" to mapOf(
+                "start" to mapOf("line" to 3, "character" to 24),
+                "end" to mapOf("line" to 3, "character" to 30),
+            ),
+            "message" to "unknown type Player",
+        )).asJsonObject
+
+        assertEquals(0, codeActions(uri, synthetic).size)
+    }
+
+    @Test
+    fun `applying the action clears the unknown type diagnostic`() {
+        start()
+        writeFile("src/engine/types.tl", "")
+        writeFile("src/entities/player.tl", PLAYER_RECORD)
+        val (uri, diagnostics) = openWorkspaceDocument("src/engine/run.tl", USES_PLAYER)
+        val edit = singleEdit(codeActions(uri, unknownTypeDiagnostic(diagnostics))[0], uri)
+
+        val lines = USES_PLAYER.lines().toMutableList()
+        lines.add(edit.getAsJsonObject("range").getAsJsonObject("start").get("line").asInt, edit.get("newText").asString.removeSuffix("\n"))
+        change(uri, lines.joinToString("\n"), version = 2)
+
+        val after = diagnosticsFor(uri).map { it.asJsonObject.get("message").asString }
+        assertTrue(after.none { it.startsWith("unknown type") }, "got: $after")
+    }
+
+    // --- go to require target ----------------------------------------------------------
+
+    @Test
+    fun `definition on a require string jumps to the top of the required module`() {
+        start()
+        val target = writeFile("src/engine/run.tl", "local M = {}\nreturn M\n")
+        val text = "local run = require(\"src.engine.run\")\nreturn run\n"
+        val (uri, _) = openWorkspaceDocument("src/main.tl", text)
+
+        assertLocation(at("textDocument/definition", uri, line = 0, character = text.indexOf("engine")), fileUri(target), 0, 0)
+        // The quotes count as part of the string.
+        assertLocation(at("textDocument/definition", uri, line = 0, character = text.indexOf('"')), fileUri(target), 0, 0)
+    }
+
+    @Test
+    fun `definition on a no-parens require resolves the init file`() {
+        start()
+        val target = writeFile("src/engine/init.tl", "global record Engine\nend\n")
+        val text = "require \"src.engine\"\n"
+        val (uri, _) = openWorkspaceDocument("src/main.tl", text)
+
+        assertLocation(at("textDocument/definition", uri, line = 0, character = text.indexOf('"')), fileUri(target), 0, 0)
+    }
+
+    @Test
+    fun `require targets resolve in priority order`() {
+        start()
+        writeFile("a/b.lua", "")
+        writeFile("a/b/init.tl", "")
+        val dtl = writeFile("a/b.d.tl", "")
+        val text = "require(\"a.b\")\n"
+        val (uri, _) = openWorkspaceDocument("main.tl", text)
+
+        assertLocation(at("textDocument/definition", uri, line = 0, character = 10), fileUri(dtl), 0, 0)
+    }
+
+    @Test
+    fun `definition on an unresolvable require returns null`() {
+        start()
+        val text = "local s = require(\"not.here\")\nreturn s\n"
+        val (uri, _) = openWorkspaceDocument("src/main.tl", text)
+
+        assertTrue(at("textDocument/definition", uri, line = 0, character = text.indexOf("not")).isJsonNull)
+    }
+
+    @Test
+    fun `definition on a string that is not a require argument returns null`() {
+        start()
+        val text = "print(\"src.engine.run\")\n"
+        val (uri, _) = openWorkspaceDocument("src/main.tl", text)
+
+        assertTrue(at("textDocument/definition", uri, line = 0, character = 10).isJsonNull)
+    }
+
     // --- helpers -----------------------------------------------------------------
 
     private companion object {
@@ -358,6 +563,57 @@ class TealServerTest {
             local s = "hi"
             print(p.x, s:upper())
         """.trimIndent() + "\n"
+    }
+
+    private val PLAYER_RECORD = "global record Player\n  name: string\nend\n"
+
+    private val USES_PLAYER = """
+        require("src.engine.types")
+        -- require("src.entities.player")
+
+        local function greet(p: Player): string
+          return p.name
+        end
+        return greet
+    """.trimIndent()
+
+    private fun writeFile(path: String, text: String): File =
+        File(projectRoot, path).apply { parentFile.mkdirs(); writeText(text) }
+
+    // Like open, but the file also exists on disk under the workspace, so
+    // requires and workspace scans see it; returns its first diagnostics too.
+    private fun openWorkspaceDocument(path: String, text: String): Pair<String, List<JsonObject>> {
+        writeFile(path, text)
+        val uri = open(path, text)
+        return uri to diagnosticsFor(uri).map { it.asJsonObject }
+    }
+
+    private fun unknownTypeDiagnostic(diagnostics: List<JsonObject>): JsonObject =
+        diagnostics.singleOrNull { it.get("message").asString == "unknown type Player" }
+            ?: error("expected exactly one 'unknown type Player' diagnostic, got: $diagnostics")
+
+    private fun codeActions(uri: String, diagnostic: JsonObject): List<JsonObject> {
+        val response = request("textDocument/codeAction", mapOf(
+            "textDocument" to mapOf("uri" to uri),
+            "range" to diagnostic.get("range"),
+            "context" to mapOf("diagnostics" to listOf(diagnostic)),
+        ))
+        return response.getAsJsonArray("result").map { it.asJsonObject }
+    }
+
+    private fun singleEdit(action: JsonObject, uri: String): JsonObject =
+        action.getAsJsonObject("edit").getAsJsonObject("changes").getAsJsonArray(uri).single().asJsonObject
+
+    private fun references(uri: String, line: Int, character: Int, includeDeclaration: Boolean): List<Pair<Int, Int>> {
+        val response = request("textDocument/references", mapOf(
+            "textDocument" to mapOf("uri" to uri),
+            "position" to mapOf("line" to line, "character" to character),
+            "context" to mapOf("includeDeclaration" to includeDeclaration),
+        ))
+        return response.getAsJsonArray("result").map {
+            val start = it.asJsonObject.getAsJsonObject("range").getAsJsonObject("start")
+            start.get("line").asInt to start.get("character").asInt
+        }
     }
 
     private fun startWithGeometry(): String {

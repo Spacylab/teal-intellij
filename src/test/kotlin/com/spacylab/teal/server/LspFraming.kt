@@ -1,4 +1,4 @@
-package com.spacylab.teal.lsp
+package com.spacylab.teal.server
 
 import java.io.InputStream
 import java.io.OutputStream
@@ -6,7 +6,7 @@ import java.nio.charset.StandardCharsets
 
 /**
  * Minimal LSP stdio message framing (`Content-Length: N\r\n\r\n<N bytes of UTF-8 JSON>`),
- * shared by both directions of the references proxy.
+ * used by the server tests to drive the Teal server over raw stdio.
  */
 object LspFraming {
 

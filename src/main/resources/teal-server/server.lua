@@ -75,6 +75,8 @@ function requests.initialize(params)
          typeDefinitionProvider = true,
          completionProvider = { triggerCharacters = { ".", ":" } },
          signatureHelpProvider = { triggerCharacters = { "(", "," } },
+         referencesProvider = true,
+         codeActionProvider = { codeActionKinds = { "quickfix" } },
       },
       serverInfo = { name = "teal-server", version = "tl " .. tl.version() },
    }
@@ -102,6 +104,19 @@ requests["textDocument/definition"] = positional(features.definition)
 requests["textDocument/typeDefinition"] = positional(features.type_definition)
 requests["textDocument/completion"] = positional(features.completion)
 requests["textDocument/signatureHelp"] = positional(features.signature_help)
+
+requests["textDocument/references"] = function(params)
+   local include = type(params.context) == "table" and params.context.includeDeclaration == true
+   return positional(function(ws, doc, position)
+      return features.references(ws, doc, position, include)
+   end)(params)
+end
+
+requests["textDocument/codeAction"] = function(params)
+   local doc = params.textDocument and workspace.documents[params.textDocument.uri]
+   if not doc then return json.array() end
+   return features.code_action(workspace, doc, params.context)
+end
 
 notifications["initialized"] = function() end
 
