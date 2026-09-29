@@ -42,6 +42,7 @@ intellijPlatform {
         }
         changeNotes = """
             <ul>
+                <li>0.5.0: Teal support now comes from a language server bundled with the plugin, built on the <code>tl</code> compiler. It needs Lua and <code>luarocks install tl</code>; teal-language-server is no longer needed. Adds completion, signature help and type definition, better hover and go-to-definition, Find Usages on record fields, and spell-checking limited to comments and strings.</li>
                 <li>0.4.0: Cmd/Ctrl+Click on a <code>require("...")</code> string opens the required module's file.</li>
                 <li>0.3.0: Quick fix for <code>unknown type X</code> errors: Alt+Enter adds the <code>require</code> of the module that declares the global type.</li>
                 <li>0.2.0: Find Usages for .tl files (current document), implemented in the plugin itself since teal-language-server doesn't support it.</li>
