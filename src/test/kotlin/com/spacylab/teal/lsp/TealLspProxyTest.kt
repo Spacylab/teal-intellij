@@ -259,7 +259,70 @@ class TealLspProxyTest {
         )
     }
 
+    // --- go to require target -----------------------------------------------
+
+    @Test
+    fun `definition on a require string jumps to the top of the required module`() {
+        val target = writeFile("src/engine/run.tl", "local M = {}\nreturn M\n")
+        val text = "local run = require(\"src.engine.run\")\nreturn run\n"
+        val (uri, _) = openWorkspaceDocument("src/main.tl", text)
+
+        val location = getDefinition(uri, line = 0, character = text.indexOf("engine"))
+
+        assertEquals(fileUri(target), location.get("uri").asString)
+        val start = location.getAsJsonObject("range").getAsJsonObject("start")
+        assertEquals(0, start.get("line").asInt)
+        assertEquals(0, start.get("character").asInt)
+    }
+
+    @Test
+    fun `definition on a no-parens require resolves the init file`() {
+        val target = writeFile("src/engine/init.tl", "global record Engine\nend\n")
+        val text = "require \"src.engine\"\n"
+        val (uri, _) = openWorkspaceDocument("src/main.tl", text)
+
+        val location = getDefinition(uri, line = 0, character = text.indexOf('"'))
+
+        assertEquals(fileUri(target), location.get("uri").asString)
+    }
+
+    @Test
+    fun `definition on an unresolvable require returns null`() {
+        val text = "local s = require(\"not.here\")\nreturn s\n"
+        val (uri, _) = openWorkspaceDocument("src/main.tl", text)
+
+        val result = readResponse(sendDefinitionRequest(uri, 0, text.indexOf("not"))).get("result")
+
+        assertTrue(result == null || result.isJsonNull, "expected null, got: $result")
+    }
+
+    @Test
+    fun `definition elsewhere still passes through to the server`() {
+        val text = "local x = 1\nprint(x)\n"
+        val (uri, _) = openWorkspaceDocument("src/main.tl", text)
+
+        val location = getDefinition(uri, line = 1, character = 6)
+
+        assertEquals(uri, location.get("uri").asString)
+        assertEquals(0, location.getAsJsonObject("range").getAsJsonObject("start").get("line").asInt)
+    }
+
     // --- helpers -----------------------------------------------------------
+
+    private fun sendDefinitionRequest(uri: String, line: Int, character: Int): Int =
+        sendRequest("textDocument/definition", mapOf(
+            "textDocument" to mapOf("uri" to uri),
+            "position" to mapOf("line" to line, "character" to character),
+        ))
+
+    private fun getDefinition(uri: String, line: Int, character: Int): JsonObject {
+        val result = readResponse(sendDefinitionRequest(uri, line, character)).get("result")
+        return when {
+            result != null && result.isJsonObject -> result.asJsonObject
+            result != null && result.isJsonArray && result.asJsonArray.size() == 1 -> result.asJsonArray[0].asJsonObject
+            else -> error("expected a single location, got: $result")
+        }
+    }
 
     private fun writeFile(path: String, text: String): File =
         File(projectRoot, path).apply { parentFile.mkdirs(); writeText(text) }

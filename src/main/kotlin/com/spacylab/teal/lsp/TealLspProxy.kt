@@ -37,6 +37,11 @@ import java.util.concurrent.atomic.AtomicLong
  * `unknown type X` diagnostic, one `Add require("<module>")` action per
  * workspace module declaring a global `X` (see [TealMissingRequire]).
  *
+ * `textDocument/definition` on a require's string literal: the server only
+ * resolves identifiers, so this proxy answers with the require target itself --
+ * the top of the module's file (see [TealRequireTarget]). Definition requests
+ * anywhere else pass through.
+ *
  * Every other message passes through to the real process untouched.
  *
  * Deliberately has no IntelliJ/LSP4IJ platform dependency, so it can be exercised
@@ -139,6 +144,11 @@ class TealLspProxy(
                     "textDocument/didClose" -> {
                         documentUri(json)?.let { documentText.remove(it) }
                         LspFraming.writeMessage(realServerOutput, GSON.toJson(json))
+                    }
+                    "textDocument/definition" -> {
+                        if (!answerRequireTargetDefinition(idElement ?: JsonNull.INSTANCE, json)) {
+                            LspFraming.writeMessage(realServerOutput, GSON.toJson(json))
+                        }
                     }
                     "textDocument/references" -> {
                         val requestId = idElement ?: JsonNull.INSTANCE
@@ -292,6 +302,29 @@ class TealLspProxy(
 
         replyResult(requestId, locations)
     }
+
+    // --- textDocument/definition on a require ---------------------------------
+
+    /**
+     * Replies to a definition request on a require's string literal and returns
+     * true, or returns false (without replying) so the request goes to the server.
+     * Cheap enough -- a line scan and a few file checks -- to run on the pump thread.
+     */
+    private fun answerRequireTargetDefinition(requestId: JsonElement, request: JsonObject): Boolean {
+        val root = workspaceRoot ?: return false
+        val uri = documentUri(request) ?: return false
+        val position = request.getAsJsonObject("params")?.getAsJsonObject("position") ?: return false
+        val line = position.get("line")?.asInt ?: return false
+        val character = position.get("character")?.asInt ?: return false
+        val lineText = documentText[uri]?.lines()?.getOrNull(line) ?: return false
+        val module = TealRequireTarget.moduleNameAt(lineText, character) ?: return false
+
+        val target = TealRequireTarget.resolve(root, module)
+        replyResult(requestId, target?.let { locationJson(fileUri(it), 0, 0, 0) } ?: JsonNull.INSTANCE)
+        return true
+    }
+
+    private fun fileUri(file: File): String = URI("file", "", file.absolutePath.replace(File.separatorChar, '/'), null).toString()
 
     // --- textDocument/codeAction -----------------------------------------------
 

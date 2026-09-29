@@ -48,6 +48,10 @@ _Avoid_: "import" when precision matters (acceptable in casual UI wording).
 **module name**
 The dotted string passed to `require`, derived from a `.tl` file's path relative to the workspace root (`src/entities/player.tl` → `src.entities.player`).
 
+**require target**
+The workspace file a **require**'s module name resolves to. Go-to-definition on the require's string literal opens it. A module with no require target in the workspace (standard library, LuaRocks dependencies) has nothing to open.
+_Avoid_: "import target," "module file" (ambiguous with any `.tl` file).
+
 **missing-require quick fix**
 The Alt+Enter fix offered on an `unknown type X` diagnostic: it adds a bare require of each module that declares a global `X`. It does not handle local, module-returned types; bringing those into scope would mean rewriting the usage, not just adding a require.
 _Avoid_: "auto-import" (suggests IDE-wide import management that doesn't exist here).
