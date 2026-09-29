@@ -44,6 +44,7 @@ intellijPlatform {
         }
         changeNotes = """
             <ul>
+                <li>0.4.0: Cmd/Ctrl+Click on a <code>require("...")</code> string opens the required module's file.</li>
                 <li>0.3.0: Quick fix for <code>unknown type X</code> errors: Alt+Enter adds the <code>require</code> of the module that declares the global type.</li>
                 <li>0.2.0: Find Usages for .tl files (current document), implemented in the plugin itself since teal-language-server doesn't support it.</li>
                 <li>0.1.0: Initial release &mdash; syntax highlighting, inline diagnostics, hover, and go-to-definition for .tl files, plus a distinct file icon in the project tree.</li>

@@ -4,15 +4,16 @@
     <vendor url="https://github.com/Spacylab/teal-intellij">Spacylab</vendor>
 
     <description><![CDATA[
-    <p>Teal (.tl) support for IntelliJ IDEA: syntax highlighting, inline diagnostics, hover, go-to-definition,
-    Find Usages (same-document), and a quick fix that adds the missing <code>require</code> for an unknown global
+    <p>Teal (.tl) support for IntelliJ IDEA: syntax highlighting, inline diagnostics, hover, go-to-definition
+    (including from a <code>require</code> string to the module's file), Find Usages (same-document), and a quick fix that adds the missing <code>require</code> for an unknown global
     type.</p>
     <p>A thin companion plugin — nearly all language intelligence is delegated to
     <a href="https://github.com/redhat-developer/lsp4ij">LSP4IJ</a> wrapping
     <a href="https://github.com/teal-language/teal-language-server">teal-language-server</a>, which must be
-    installed separately (<code>luarocks install teal-language-server</code>). The exceptions are Find Usages and
-    the missing-require quick fix: teal-language-server doesn't implement <code>textDocument/references</code> or
-    <code>textDocument/codeAction</code>, so the plugin answers those itself. Syntax highlighting reuses
+    installed separately (<code>luarocks install teal-language-server</code>). The exceptions are Find Usages, the
+    missing-require quick fix, and go-to-definition on a <code>require</code> string: teal-language-server doesn't
+    implement <code>textDocument/references</code> or <code>textDocument/codeAction</code>, and only resolves
+    definitions of identifiers, so the plugin answers those itself. Syntax highlighting reuses
     <a href="https://github.com/teal-language/vscode-teal">vscode-teal</a>'s MIT-licensed TextMate grammar.</p>
     ]]></description>
 
