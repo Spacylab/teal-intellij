@@ -23,6 +23,9 @@
         <notificationGroup id="Teal" displayType="BALLOON"/>
         <textmate.bundleProvider implementation="com.spacylab.teal.TealTextMateBundleProvider"/>
         <fileIconProvider implementation="com.spacylab.teal.TealFileIconProvider"/>
+        <!-- Ahead of the TextMate plugin's own strategy, which checks every token. -->
+        <spellchecker.support language="textmate" order="first"
+                              implementationClass="com.spacylab.teal.TealSpellcheckingStrategy"/>
     </extensions>
 
     <extensions defaultExtensionNs="com.redhat.devtools.lsp4ij">
