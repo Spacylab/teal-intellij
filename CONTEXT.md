@@ -28,7 +28,7 @@ The Teal server's single `tl` environment, which every open document is checked 
 An existing, free/OSS JetBrains-family plugin ([redhat-developer/lsp4ij](https://github.com/redhat-developer/lsp4ij)) that lets any IntelliJ-platform IDE — including Community Edition — act as a generic LSP client. All IDE-side UX for the [Teal server](#teal-server)'s features is LSP4IJ's stock UX. An external dependency, not this project's own code.
 
 **companion plugin**
-This project's actual deliverable: an IntelliJ plugin that registers `.tl` files, bundles the [TextMate route](#textmate-route) for highlighting, and bundles and launches the [Teal server](#teal-server) through LSP4IJ. It has no custom PSI, lexer or parser. All language intelligence lives in the Teal server, as LSP answers.
+This project's actual deliverable: an IntelliJ plugin that registers `.tl` files, bundles the [TextMate route](#textmate-route) as the base highlighting layer, and bundles and launches the [Teal server](#teal-server) through LSP4IJ. It has no custom PSI, lexer or parser. All language intelligence lives in the Teal server, as LSP answers.
 _Avoid_: "the plugin" (ambiguous — could misread as the rejected native-PSI shape), "the IntelliJ plugin."
 
 **LSP-client architecture**
@@ -38,8 +38,12 @@ The locked architectural shape of the companion plugin — see [ADR 0001](docs/a
 The alternative shape considered and ruled out: a plugin implementing its own JFlex lexer, Grammar-Kit PSI/parser, and annotator, independent of any LSP server. Kept here only so the term is recognizable if it resurfaces; it is not being built.
 
 **TextMate route**
-The chosen mechanism for `.tl` syntax highlighting: reusing `vscode-teal`'s MIT-licensed grammar (`syntaxes/teal.tmLanguage.json`) via IntelliJ's bundled TextMate Bundles support, since neither teal-language-server nor the Teal server provides semantic tokens to drive LSP-based highlighting instead.
+The instant, text-only layer of `.tl` highlighting: `vscode-teal`'s MIT-licensed grammar (`syntaxes/teal.tmLanguage.json`) run by IntelliJ's bundled TextMate support. It colors whatever can be told from text alone (keywords, literals, comments, declared function names, field access, type annotations). [Semantic highlighting](#semantic-highlighting) refines it.
 _Avoid_: "the grammar" alone (ambiguous with Teal's own language grammar).
+
+**semantic highlighting**
+The scope-aware layer of `.tl` highlighting: the [Teal server](#teal-server) classifies each identifier from `tl`'s view of the code (local, parameter, global, field, function, type), and LSP4IJ colors it with the IDE's standard Language Defaults keys, so `.tl` files follow the user's color scheme exactly like Lua files do. It arrives after a check, layered over the [TextMate route](#textmate-route).
+_Avoid_: "semantic tokens" for the feature (that's the LSP wire format).
 
 **MVP surface**
 The feature set that delivers real daily-use value for the locked LSP-client architecture: `.tl` file-type association, syntax highlighting (via the TextMate route), inline diagnostics, hover, and go-to-definition. Distinct from a **publishable release** (JetBrains Marketplace-ready — polish, docs, versioning), which is an eventual goal but explicitly out of scope for the MVP surface.

@@ -38,3 +38,12 @@ What changes and what doesn't:
 - **Lua version compatibility.** The Lua runtime becomes our problem. For example, the `tl` CLI installed under Homebrew's Lua 5.5 fails at startup with `attempt to assign to const variable 'entry'`. The bug is in the CLI script, which assigns to a `for` loop variable (read-only in 5.5). The prototype confirmed that `tl` 0.24.8 loads and checks fine as a library on Lua 5.5.1. Support for Lua 5.1 through 5.5 and LuaJIT needs an explicit decision.
 - **Ownership.** The repo gains a second language (Lua or Teal) with its own tests. The existing proxy JUnit tests, which already drive a real server over raw stdio, can be pointed at the new server to catch regressions during migration.
 - **Migration order.** The proxy keeps working throughout. Move diagnostics, hover, definition and completion first to reach parity, then move each proxy feature onto type-report data. Delete the proxy when nothing passes through it.
+
+**Fourth amendment: semantic highlighting on top of the TextMate route.** The original reason for TextMate-only highlighting was that `teal-language-server` had no `semanticTokensProvider`. That server is gone; the Teal server has `tl`'s scope and type data, so it can classify identifiers (local, parameter, global, field, function, type) the way the Lua plugin does. Highlighting becomes two layers: the vendored TextMate grammar stays as the instant, text-only base, and the Teal server answers `textDocument/semanticTokens`, which LSP4IJ maps onto the IDE's standard Language Defaults color keys.
+
+**Considered options**:
+- **TextMate only, with better scopes.** Cheap and instant, but text can't tell a local from a parameter or a global. Kept as the base layer, not the whole answer.
+- **Semantic tokens only.** Colors would appear only after a check and vanish on unparseable code. Rejected as the sole layer.
+- **An IntelliJ-native annotator or custom color settings page.** Rejected: it's IntelliJ-native language code, which this ADR rules out, and standard keys already make `.tl` follow the user's scheme like Lua does.
+
+**Consequences**: the vendored `vscode-teal` grammar is now edited in place (changes listed next to its license) and diverges from upstream. The server gains one more handler built on the type report, with the same `tl` API-stability caveat as the third amendment. See [.scratch/highlighting/spec.md](../../.scratch/highlighting/spec.md).
