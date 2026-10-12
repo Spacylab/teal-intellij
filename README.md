@@ -15,9 +15,16 @@ Language intelligence comes from the Teal server, a small LSP server in plain Lu
 
 ## Build
 
+The Teal server is written in Teal ([src/main/teal/](src/main/teal/), [ADR 0002](docs/adr/0002-teal-server-written-in-teal.md)), and the build compiles it to Lua with [cyan](https://github.com/teal-language/cyan). Building needs, on `PATH`:
+
+- `lua` with the `tl` rock at the version pinned by `tlVersion` in [gradle.properties](gradle.properties): `luarocks install tl 0.24.8`. The build fails on any other version.
+- `cyan`: `luarocks install cyan`.
+
 ```bash
 ./gradlew buildPlugin
 ```
+
+Type errors and warnings in the server fail the build. To check the server without Gradle, run `cyan build` at the repo root.
 
 ## Try it in a sandboxed IDE
 

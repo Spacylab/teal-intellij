@@ -1,3 +1,6 @@
+import java.io.ByteArrayOutputStream
+import javax.inject.Inject
+
 plugins {
     id("java")
     id("org.jetbrains.kotlin.jvm") version "2.4.20"
@@ -30,6 +33,65 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
+}
+
+/**
+ * Compiles the Teal server (ADR 0002) with `cyan build`, after checking that
+ * `tl` is the pinned version: type checking only covers the `tl` it ran against.
+ */
+abstract class CompileTeal @Inject constructor(private val exec: ExecOperations) : DefaultTask() {
+    @get:Input
+    abstract val tlVersion: Property<String>
+
+    @get:InputFiles
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val sources: ConfigurableFileCollection
+
+    /** Must match `build_dir` in tlconfig.lua, minus its `teal-server` leaf (the resource path). */
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty
+
+    @get:Internal
+    abstract val projectDir: DirectoryProperty
+
+    @TaskAction
+    fun compile() {
+        val found = run("lua", "-e", "io.write(require('tl').version())", hint = "install Lua and `luarocks install tl ${tlVersion.get()}`")
+        if (found != tlVersion.get()) {
+            throw GradleException("tl $found found, but the build is pinned to tl ${tlVersion.get()} (tlVersion in gradle.properties): `luarocks install tl ${tlVersion.get()}`")
+        }
+        run("cyan", "build", "--prune", hint = "`luarocks install cyan`")
+    }
+
+    private fun run(vararg command: String, hint: String): String {
+        val out = ByteArrayOutputStream()
+        val result = try {
+            exec.exec {
+                commandLine(*command)
+                workingDir = projectDir.get().asFile
+                standardOutput = out
+                errorOutput = out
+                isIgnoreExitValue = true
+            }
+        } catch (e: Exception) {
+            throw GradleException("cannot run `${command.first()}`: $hint", e)
+        }
+        if (result.exitValue != 0) {
+            throw GradleException("`${command.joinToString(" ")}` failed:\n$out")
+        }
+        return out.toString().trim()
+    }
+}
+
+val compileTeal = tasks.register<CompileTeal>("compileTeal") {
+    tlVersion = providers.gradleProperty("tlVersion")
+    sources.from("tlconfig.lua", "src/main/teal", "src/main/resources/teal-server")
+    outputDir = layout.buildDirectory.dir("generated/teal")
+    projectDir = layout.projectDirectory
+}
+
+sourceSets.main {
+    resources.srcDir(compileTeal)
 }
 
 intellijPlatform {
