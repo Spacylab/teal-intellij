@@ -358,8 +358,16 @@
 		"function-name": {
 			"patterns": [
 				{
-					"match": "([a-zA-Z_][a-zA-Z0-9_]*)",
-					"name": "support.function.name.teal"
+					"match": "[a-zA-Z_][a-zA-Z0-9_]*(?=\\s*[.:])",
+					"name": "variable.other.teal"
+				},
+				{
+					"match": "[.:]",
+					"name": "punctuation.accessor.teal"
+				},
+				{
+					"match": "[a-zA-Z_][a-zA-Z0-9_]*",
+					"name": "entity.name.function.teal"
 				}
 			]
 		},
@@ -383,8 +391,11 @@
 		"type-arg": {
 			"patterns": [
 				{
-					"match": "[a-zA-Z_][a-zA-Z0-9_]*",
-					"name": "support.type.teal"
+					"match": "\\bis\\b",
+					"name": "keyword.other.teal"
+				},
+				{
+					"include": "#type"
 				}
 			]
 		},
@@ -414,23 +425,23 @@
 					"comment": "First argument",
 					"begin": "(?<=\\()",
 					"end": "(?=:|\\))",
-					"name": "function.argument.teal",
 					"patterns": [
 						{
 							"include": "#comment"
 						}
-					]
+					],
+					"contentName": "variable.parameter.teal"
 				},
 				{
 					"comment": "Nth argument",
 					"begin": ",",
 					"end": "(?=:|\\))",
-					"name": "function.argument.teal",
 					"patterns": [
 						{
 							"include": "#comment"
 						}
-					]
+					],
+					"contentName": "variable.parameter.teal"
 				}
 			]
 		},
@@ -476,7 +487,7 @@
 							"name": "keyword.declaration.function.teal"
 						},
 						"3": {
-							"name": "support.type.teal"
+							"name": "entity.name.type.teal"
 						}
 					},
 					"patterns": [
@@ -485,7 +496,7 @@
 						},
 						{
 							"match": "[a-zA-Z_][a-zA-Z0-9_]*\\s*(?=:)",
-							"name": "function.argument.teal"
+							"name": "variable.parameter.teal"
 						},
 						{
 							"include": "#type"
@@ -499,7 +510,7 @@
 							"name": "keyword.declaration.function.teal"
 						},
 						"3": {
-							"name": "support.type.teal"
+							"name": "entity.name.type.teal"
 						}
 					}
 				}
@@ -525,8 +536,12 @@
 		"type-name": {
 			"patterns": [
 				{
-					"match": "[a-zA-Z_][a-zA-Z0-9_]*",
+					"match": "\\b(any|boolean|integer|nil|number|string|thread|userdata)\\b",
 					"name": "support.type.teal"
+				},
+				{
+					"match": "[a-zA-Z_][a-zA-Z0-9_]*",
+					"name": "entity.name.type.teal"
 				},
 				{
 					"match": "\\.",
@@ -755,7 +770,7 @@
 					"end": "(=|$)",
 					"beginCaptures": {
 						"0": {
-							"name": "support.type.teal"
+							"name": "entity.name.type.teal"
 						}
 					},
 					"patterns": [
@@ -805,7 +820,7 @@
 				},
 				{
 					"match": "[a-zA-Z_][a-zA-Z0-9_]*",
-					"name": "support.type.teal"
+					"name": "entity.name.type.teal"
 				}
 			]
 		},

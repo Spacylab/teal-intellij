@@ -8,10 +8,10 @@ import java.nio.file.Files
 import java.nio.file.Path
 
 /**
- * Vendors vscode-teal's MIT-licensed TextMate grammar (see resources/teal-textmate-bundle/LICENSE-vscode-teal)
- * as a bundle the platform's TextMate Bundles support can load — the mechanism chosen in
- * .scratch/teal-plugin/spec.md for .tl syntax highlighting and file-type/icon association, since
- * teal-language-server has no semanticTokensProvider to drive LSP-based highlighting instead.
+ * Vendors vscode-teal's MIT-licensed TextMate grammar (see resources/teal-textmate-bundle/LICENSE-vscode-teal,
+ * and CHANGES-vscode-teal.md for our edits) as a bundle the platform's TextMate Bundles support can load. It gives
+ * .tl files their file-type/icon association and the instant, text-only layer of highlighting (the TextMate route
+ * in CONTEXT.md).
  *
  * TextMateBundleProvider needs a real filesystem directory, but plugin resources ship inside a jar,
  * so the bundle is extracted to a writable directory on every call rather than read in place.
