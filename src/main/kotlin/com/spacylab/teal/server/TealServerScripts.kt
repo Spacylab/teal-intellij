@@ -12,7 +12,7 @@ object TealServerScripts {
     private const val RESOURCE_DIR = "/teal-server"
 
     // Listed explicitly: a directory inside a jar can't be enumerated portably.
-    private val FILES = listOf("server.lua", "json.lua", "rpc.lua", "uri.lua", "diagnostics.lua", "workspace.lua", "lookup.lua", "features.lua", "requires.lua", "semantic.lua")
+    private val FILES = listOf("server.lua", "json.lua", "rpc.lua", "uri.lua", "lsp.lua", "diagnostics.lua", "workspace.lua", "lookup.lua", "features.lua", "requires.lua", "semantic.lua")
 
     /** Copies every server script into [dir] and returns the entry point, `server.lua`. */
     fun extractTo(dir: File): File {

@@ -8,12 +8,26 @@
 
 local tl = require("tl")
 local json = require("json")
+local lsp = require("lsp")
 
-local diagnostics = {}
+local record diagnostics
+   -- What workspace's check of one document produced. `result` is nil only
+   -- when lexing failed.
+   record Check
+      tokens: {tl.Token}
+      lex_errors: {tl.Error}
+      parse_errors: {tl.Error}
+      result: tl.Result
+   end
 
-local ERROR, WARNING = 1, 2
+   -- The tlconfig.lua fields that change how warnings are reported.
+   record WarningConfig
+      disable_warnings: {string}
+      warning_error: {string}
+   end
+end
 
-local function diagnostic(tokens, err, severity)
+local function diagnostic(tokens: {tl.Token}, err: tl.Error, severity: lsp.DiagnosticSeverity): lsp.Diagnostic
    local token = tokens and tl.get_token_at(tokens, err.y, err.x)
    -- "$EOF$" is tl's end-of-input marker, not text in the file.
    local length = (token and token ~= "$EOF$") and #token or 0
@@ -22,33 +36,31 @@ local function diagnostic(tokens, err, severity)
          start = { line = err.y - 1, character = err.x - 1 },
          ["end"] = { line = err.y - 1, character = err.x - 1 + length },
       },
-      severity = severity,
+      severity = lsp.severity[severity],
       source = "tl",
       message = err.msg,
    }
 end
 
-local function set_of(list)
-   local s = {}
+local function set_of(list: {string}): {string:boolean}
+   local s: {string:boolean} = {}
    for _, v in ipairs(list or {}) do s[v] = true end
    return s
 end
 
--- `check` is the table returned by workspace's check: tokens, lex_errors,
--- parse_errors and result. `config` is the tlconfig table.
-function diagnostics.from_check(check, path, config)
-   local out = json.array()
+function diagnostics.from_check(check: diagnostics.Check, path: string, config: diagnostics.WarningConfig): {lsp.Diagnostic}
+   local out: {lsp.Diagnostic} = json.array()
 
    if #check.lex_errors > 0 then
-      for _, tk in ipairs(check.lex_errors) do
-         out[#out + 1] = diagnostic(nil, { y = tk.y, x = tk.x, msg = "unexpected token '" .. tostring(tk.tk) .. "'" }, ERROR)
+      for _, err in ipairs(check.lex_errors) do
+         out[#out + 1] = diagnostic(nil, err, "error")
       end
       return out
    end
 
    if #check.parse_errors > 0 then
       for _, err in ipairs(check.parse_errors) do
-         out[#out + 1] = diagnostic(check.tokens, err, ERROR)
+         out[#out + 1] = diagnostic(check.tokens, err, "error")
       end
       return out
    end
@@ -59,12 +71,12 @@ function diagnostics.from_check(check, path, config)
 
    for _, w in ipairs(result.warnings or {}) do
       if w.filename == path and not disabled[w.tag] then
-         out[#out + 1] = diagnostic(check.tokens, w, as_errors[w.tag] and ERROR or WARNING)
+         out[#out + 1] = diagnostic(check.tokens, w, as_errors[w.tag] and "error" or "warning")
       end
    end
    for _, err in ipairs(result.type_errors or {}) do
       if err.filename == path then
-         out[#out + 1] = diagnostic(check.tokens, err, ERROR)
+         out[#out + 1] = diagnostic(check.tokens, err, "error")
       end
    end
    return out

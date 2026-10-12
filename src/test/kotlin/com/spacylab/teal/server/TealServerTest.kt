@@ -110,6 +110,18 @@ class TealServerTest {
     }
 
     @Test
+    fun `a lex error is published with tl's message`() {
+        start()
+        val uri = open("main.tl", "local y = 1 $ 2\n")
+
+        val errors = diagnosticsFor(uri)
+        assertEquals(1, errors.size(), "got $errors")
+        val error = errors[0].asJsonObject
+        assertEquals("invalid token '$'", error.get("message").asString)
+        assertEquals(12, error.getAsJsonObject("range").getAsJsonObject("start").get("character").asInt)
+    }
+
+    @Test
     fun `an unused variable is published as a warning`() {
         start()
         val uri = open("main.tl", "local unused = 1\n")
