@@ -5,20 +5,29 @@
 
 local tl = require("tl")
 local json = require("json")
+local lsp = require("lsp")
 local lookup = require("lookup")
 local requires = require("requires")
+local type Workspace = require("workspace")
+
+local type Token = tl.Token
+local type TypeReport = tl.TypeReport
+local type TypeInfo = tl.TypeInfo
+local type Document = Workspace.Document
 
 local codes = tl.typecodes
-local features = {}
+
+local record features
+end
 
 -- LSP CompletionItemKind
-local KIND = { method = 2, ["function"] = 3, field = 5, variable = 6, class = 7, module = 9, enum = 13 }
+local KIND: {string:integer} = { method = 2, ["function"] = 3, field = 5, variable = 6, class = 7, module = 9, enum = 13 }
 
-local function tl_pos(position)
+local function tl_pos(position: lsp.Position): integer, integer
    return position.line + 1, position.character + 1
 end
 
-local function token_range(tk)
+local function token_range(tk: Token): lsp.Range
    return {
       start = { line = tk.y - 1, character = tk.x - 1 },
       ["end"] = { line = tk.y - 1, character = tk.x - 1 + #tk.tk },
@@ -27,24 +36,24 @@ end
 
 -- Formatting ------------------------------------------------------------------
 
-local function type_str(tr, id)
+local function type_str(tr: TypeReport, id: integer): string
    local t = id and tr.types[id]
    return t and t.str or "?"
 end
 
 -- Parameter labels for a function type: its argument types, prefixed with
 -- the declared names when the declaration has them.
-local function param_labels(workspace, doc, tr, fn)
+local function param_labels(workspace: Workspace, doc: Document, tr: TypeReport, fn: TypeInfo): {string}
    local args = fn.args or {}
-   local names
+   local names: {string}
    if fn.file and fn.y then
       local tokens = workspace:tokens_of(fn.file, doc)
       names = tokens and lookup.param_names(tokens, fn.y, fn.x)
       if names and #names ~= #args then names = nil end
    end
-   local labels = {}
-   for k, arg in ipairs(args) do
-      local ty = type_str(tr, arg[1])
+   local labels: {string} = {}
+   for k, param in ipairs(args) do
+      local ty = type_str(tr, param[1])
       local vararg = fn.vararg and k == #args
       if names then
          labels[k] = (vararg and "..." or names[k]) .. ": " .. ty
@@ -55,8 +64,8 @@ local function param_labels(workspace, doc, tr, fn)
    return labels
 end
 
-local function returns_str(tr, fn)
-   local rets = {}
+local function returns_str(tr: TypeReport, fn: TypeInfo): string
+   local rets: {string} = {}
    for k, ret in ipairs(fn.rets or {}) do
       rets[k] = type_str(tr, ret[1]) .. ((fn.varret and k == #fn.rets) and "..." or "")
    end
@@ -65,11 +74,11 @@ local function returns_str(tr, fn)
 end
 
 -- `name(a: T, b: U): R`, plus each parameter's [start, end) offset in it.
-local function signature(workspace, doc, tr, name, fn, skip_self)
+local function signature(workspace: Workspace, doc: Document, tr: TypeReport, name: string, fn: TypeInfo, skip_self: boolean): string, {lsp.ParameterInformation}
    local labels = param_labels(workspace, doc, tr, fn)
    if skip_self then table.remove(labels, 1) end
    local label = name .. "("
-   local params = json.array()
+   local params: {lsp.ParameterInformation} = json.array()
    for k, l in ipairs(labels) do
       if k > 1 then label = label .. ", " end
       params[k] = { label = json.array({ #label, #label + #l }) }
@@ -78,28 +87,28 @@ local function signature(workspace, doc, tr, name, fn, skip_self)
    return label .. ")" .. returns_str(tr, fn), params
 end
 
-local function variants(tr, t)
+local function variants(tr: TypeReport, t: TypeInfo): {TypeInfo}
    if t.t == codes.POLY then
-      local out = {}
+      local out: {TypeInfo} = {}
       for k, id in ipairs(t.types or {}) do out[k] = lookup.resolve(tr, id) end
       return out
    end
    return { t }
 end
 
-local function sorted_keys(t)
-   local keys = {}
+local function sorted_keys<V>(t: {string:V}): {string}
+   local keys: {string} = {}
    for k in pairs(t) do keys[#keys + 1] = k end
    table.sort(keys)
    return keys
 end
 
-local function hover_text(workspace, doc, tr, name, id, method_access)
+local function hover_text(workspace: Workspace, doc: Document, tr: TypeReport, name: string, id: integer, method_access: boolean): string
    local shown = tr.types[id]
    if not shown then return nil end
    local t = lookup.resolve(tr, id) or shown
 
-   local blocks = {}
+   local blocks: {string} = {}
    if t.t == codes.FUNCTION or t.t == codes.POLY then
       for _, fn in ipairs(variants(tr, t)) do
          blocks[#blocks + 1] = "function " .. (signature(workspace, doc, tr, name, fn, method_access))
@@ -121,14 +130,14 @@ local function hover_text(workspace, doc, tr, name, id, method_access)
       blocks[1] = name .. ": " .. (shown.str or t.str or "?")
    end
 
-   local parts = {}
+   local parts: {string} = {}
    for k, block in ipairs(blocks) do parts[k] = "```teal\n" .. block .. "\n```" end
    return table.concat(parts, "\nor\n")
 end
 
 -- Handlers --------------------------------------------------------------------
 
-local function identifier_at(doc, position)
+local function identifier_at(doc: Document, position: lsp.Position): {Token}, integer
    local check = doc.check
    if not check or not check.tokens then return nil end
    local y, x = tl_pos(position)
@@ -137,7 +146,7 @@ local function identifier_at(doc, position)
    return check.tokens, i
 end
 
-function features.hover(workspace, doc, position)
+function features.hover(workspace: Workspace, doc: Document, position: lsp.Position): lsp.Hover
    local tokens, i = identifier_at(doc, position)
    if not tokens then return nil end
    local tr = workspace:type_report()
@@ -149,7 +158,7 @@ function features.hover(workspace, doc, position)
 end
 
 -- Where the identifier at tokens[i] was declared, as an LSP Location, or nil.
-local function definition_at(workspace, doc, tr, tokens, i)
+local function definition_at(workspace: Workspace, doc: Document, tr: TypeReport, tokens: {Token}, i: integer): lsp.Location
    local tk = tokens[i]
    local member = lookup.is_member_op(tokens, i - 1)
    local parent = member and tokens[i - 2] and tokens[i - 2].kind == "identifier" and i - 2
@@ -196,7 +205,7 @@ local function definition_at(workspace, doc, tr, tokens, i)
    return t and workspace:location(t.file, t.y, t.x, doc)
 end
 
-function features.definition(workspace, doc, position)
+function features.definition(workspace: Workspace, doc: Document, position: lsp.Position): lsp.Location
    local check = doc.check
    if not check or not check.tokens then return nil end
 
@@ -218,14 +227,14 @@ end
 -- Find Usages, within the current document: every same-named identifier that
 -- resolves to the same place as the one at the cursor. The declaration site
 -- is the occurrence its own definition points at.
-function features.references(workspace, doc, position, include_declaration)
+function features.references(workspace: Workspace, doc: Document, position: lsp.Position, include_declaration: boolean): {lsp.Location}
    local tokens, i = identifier_at(doc, position)
    if not tokens then return nil end
    local tr = workspace:type_report()
    local target = definition_at(workspace, doc, tr, tokens, i)
    if not target then return nil end
 
-   local out = json.array()
+   local out: {lsp.Location} = json.array()
    for k, tk in ipairs(tokens) do
       if tk.kind == "identifier" and tk.tk == tokens[i].tk then
          local loc = definition_at(workspace, doc, tr, tokens, k)
@@ -246,8 +255,9 @@ end
 -- The missing-require quick fix (ticket 04): for each `unknown type X`
 -- diagnostic, one "Add require(...)" action per workspace module declaring a
 -- global X that this file doesn't already require.
-function features.code_action(workspace, doc, context)
-   local actions = json.array()
+-- `context` comes straight from the client, so its shape is still checked.
+function features.code_action(workspace: Workspace, doc: Document, context: lsp.CodeActionContext): {lsp.CodeAction}
+   local actions: {lsp.CodeAction} = json.array()
    if not workspace.root or type(context) ~= "table" then return actions end
 
    local only = context.only
@@ -261,7 +271,7 @@ function features.code_action(workspace, doc, context)
 
    local already = requires.required_modules(doc.text)
    local line = requires.insertion_line(doc.text)
-   local at = { line = line, character = 0 }
+   local at: lsp.Position = { line = line, character = 0 }
    for _, diagnostic in ipairs(context.diagnostics or {}) do
       local name = type(diagnostic.message) == "string" and requires.unknown_type_name(diagnostic.message)
       if name then
@@ -284,7 +294,7 @@ function features.code_action(workspace, doc, context)
    return actions
 end
 
-function features.type_definition(workspace, doc, position)
+function features.type_definition(workspace: Workspace, doc: Document, position: lsp.Position): lsp.Location
    local tokens, i = identifier_at(doc, position)
    if not tokens then return nil end
    local tr = workspace:type_report()
@@ -292,7 +302,7 @@ function features.type_definition(workspace, doc, position)
    return t and workspace:location(t.file, t.y, t.x, doc)
 end
 
-local function completion_item(tr, name, id, method_call, in_scope)
+local function completion_item(tr: TypeReport, name: string, id: integer, method_call: boolean, in_scope: boolean): lsp.CompletionItem
    local t = lookup.resolve(tr, id)
    local kind = in_scope and KIND.variable or KIND.field
    if t then
@@ -307,7 +317,7 @@ local function completion_item(tr, name, id, method_call, in_scope)
    return { label = name, kind = kind, detail = type_str(tr, id) }
 end
 
-function features.completion(workspace, doc, position)
+function features.completion(workspace: Workspace, doc: Document, position: lsp.Position): {lsp.CompletionItem}
    local check = doc.check
    if not check or not check.tokens then return nil end
    local tokens = check.tokens
@@ -320,7 +330,7 @@ function features.completion(workspace, doc, position)
       i = i - 1
    end
 
-   local items = json.array()
+   local items: {lsp.CompletionItem} = json.array()
    local op = tokens[i]
    -- Mid-edit, what follows a `:` can't tell a method call from a type
    -- annotation (see lookup.is_member_op), so every `:` is tried as a method
@@ -340,7 +350,7 @@ function features.completion(workspace, doc, position)
       if op.tk == "." or #items > 0 then return items end
    end
 
-   local seen = { ["..."] = true } -- the chunk's varargs, not a name
+   local seen: {string:boolean} = { ["..."] = true } -- the chunk's varargs, not a name
    for name, id in pairs(tl.symbols_in_scope(tr, y, x, doc.path)) do
       if not seen[name] then
          seen[name] = true
@@ -356,7 +366,7 @@ end
 -- The call the cursor is inside: scans left for an unclosed `(`, counting
 -- top-level commas. Returns the index of the token before `(` and the comma
 -- count, or nil.
-local function enclosing_call(tokens, i)
+local function enclosing_call(tokens: {Token}, i: integer): integer, integer
    local depth, commas = 0, 0
    local limit = math.max(1, i - 2000)
    while i >= limit do
@@ -379,7 +389,7 @@ local function enclosing_call(tokens, i)
    return nil
 end
 
-function features.signature_help(workspace, doc, position)
+function features.signature_help(workspace: Workspace, doc: Document, position: lsp.Position): lsp.SignatureHelp
    local check = doc.check
    if not check or not check.tokens then return nil end
    local tokens = check.tokens
@@ -393,7 +403,7 @@ function features.signature_help(workspace, doc, position)
    if not t or (t.t ~= codes.FUNCTION and t.t ~= codes.POLY) then return nil end
 
    local method_call = tokens[callee - 1] and tokens[callee - 1].tk == ":"
-   local signatures = json.array()
+   local signatures: {lsp.SignatureInformation} = json.array()
    for _, fn in ipairs(variants(tr, t)) do
       local label, params = signature(workspace, doc, tr, tokens[callee].tk, fn, method_call)
       local active = commas
