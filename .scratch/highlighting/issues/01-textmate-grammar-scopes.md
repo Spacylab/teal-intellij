@@ -1,5 +1,5 @@
 Type: task
-Status: ready-for-agent
+Status: resolved
 
 ## What
 
@@ -25,9 +25,11 @@ Edit the vendored grammar `src/main/resources/teal-textmate-bundle/syntaxes/teal
 
 ## Comments
 
-**2026-10-12: implemented, not yet committed. Manual IDE check still to do.**
+**2026-10-12: implemented, implemented.**
 - IntelliJ's TextMate scope→color table (from `TextMateDefaultColorsProvider`, IDE 2024.2) is prefix-based and fixed: `entity.name.function` → function declaration, `entity.name` → class name, `support.function` → function call, `support.type` → predefined symbol, `variable.parameter` → parameter, `variable` → local variable. **No scope maps to Instance field**, so target 4 (field access) can't be colored by TextMate; it stays `variable.other` and is left to issue 02.
 - Grammar edits are listed in `src/main/resources/teal-textmate-bundle/CHANGES-vscode-teal.md`.
 - `TealGrammarTest` runs the bundled grammar through the TextMate plugin's own lexer (no IDE fixture) over `src/test/resources/highlighting/sample.tl` and asserts each target's scope.
 - Regression check: a throwaway test lexed all 60 picolo-rpg `.tl` files with the old and new grammar. The only scope changes were parameters (2,766 tokens), user types (3,027), function names (370), function-name qualifiers (221) and parameter commas (450). Keywords, strings, comments and numbers were untouched.
 - Visible effect in the default Dark scheme: declared function names turn blue. Parameters and types get the right keys but those keys are uncolored by default (see the spec's type-color decision).
+
+**2026-10-12: shipped in 0.6.0.** Manual IDE check done by the user: works well.

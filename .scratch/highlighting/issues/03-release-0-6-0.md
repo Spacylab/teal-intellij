@@ -1,5 +1,5 @@
 Type: task
-Status: ready-for-agent
+Status: resolved
 Blocked by: 01, 02
 
 ## What
@@ -13,3 +13,5 @@ Ship issues 01 and 02 as plugin version 0.6.0.
 - `./gradlew buildPlugin` produces the 0.6.0 zip; full test suite passes.
 
 ## Comments
+
+**2026-10-12: shipped in 0.6.0.** Manual IDE check done by the user: works well.
