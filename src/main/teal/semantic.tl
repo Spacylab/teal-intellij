@@ -11,69 +11,109 @@
 
 local tl = require("tl")
 local json = require("json")
+local lsp = require("lsp")
 local lookup = require("lookup")
+local type Workspace = require("workspace")
+
+local type Token = tl.Token
+local type TypeReport = tl.TypeReport
+local type TypeInfo = tl.TypeInfo
 
 local codes = tl.typecodes
-local semantic = {}
+
+local record semantic
+   -- The legend's token types; a token's type is its index here, 0-based.
+   enum TokenType
+      "class" "enum" "interface" "type" "parameter" "variable" "property" "function" "method"
+   end
+
+   TOKEN_TYPES: {TokenType}
+   TOKEN_MODIFIERS: {string}
+end
+
+local type TokenType = semantic.TokenType
 
 semantic.TOKEN_TYPES = { "class", "enum", "interface", "type", "parameter", "variable", "property", "function", "method" }
 semantic.TOKEN_MODIFIERS = { "declaration", "readonly", "defaultLibrary", "global" }
 
-local TYPE = {}
+local TYPE: {TokenType:integer} = {}
 for k, name in ipairs(semantic.TOKEN_TYPES) do TYPE[name] = k - 1 end
 local DECLARATION, READONLY, DEFAULT_LIBRARY, GLOBAL = 1, 2, 4, 8
 
 -- Words that are names to the lexer but keywords in context (`local record
 -- R`, `global x`, `x as T`, `<const>`). They are real names only where the
 -- parser made a node for them (`type(x)`).
-local CONTEXTUAL = {
+local CONTEXTUAL: {string:boolean} = {
    record = true, interface = true, enum = true, type = true, userdata = true, metamethod = true,
    where = true, global = true, as = true, is = true, const = true, close = true, total = true,
 }
 
 -- Keywords that introduce a type declaration's name.
-local TYPE_KEYWORDS = { record = "class", interface = "interface", enum = "enum", type = "type" }
+local TYPE_KEYWORDS: {string:TokenType} = { record = "class", interface = "interface", enum = "enum", type = "type" }
+
+-- The AST node kinds this module asks about, and `type:<typename>` for type
+-- nodes. tl keeps its NodeKind and TypeName enums private (its exported Node
+-- is opaque), so these strings can't be checked against tl, only kept to one
+-- list here. Other kinds found in the AST are stored but never asked about.
+local enum NodeKind
+   "argument" "variable" "type_identifier" "identifier" "literal_table_item"
+   "global_declaration" "type:nominal"
+end
+
+local type Kinds = {NodeKind:boolean}
+
+-- What node_kinds reads from a node; any other fields are walked untyped.
+local record NodeView
+   kind: string
+   typename: string
+   y: integer
+   x: integer
+end
 
 -- Node kinds (and `type:<typename>` for type nodes) by position, from a
 -- fresh parse of the tokens: at[y][x] = { [kind] = true }. The checked AST
 -- would do too, but checking links its nodes to the env's types, which a
 -- walk would then wander into.
-local function node_kinds(tokens, path)
-   local at, seen = {}, {}
+local function node_kinds(tokens: {Token}, path: string): {integer:{integer:Kinds}}
+   local at: {integer:{integer:Kinds}} = {}
+   local seen: {any:boolean} = {}
    local ok, ast = pcall(tl.parse_program, tokens, {}, path)
-   if not ok or type(ast) ~= "table" then return at end
-   local function visit(n)
-      seen[n] = true
+   -- On failure, pcall's second value is the error, not a Node.
+   local root = ast as any
+   if not ok or not root is {any:any} then return at end
+   local function visit(node: {any:any})
+      seen[node] = true
+      local n = node as NodeView
       local kind = n.kind or (n.typename and "type:" .. n.typename)
       if kind and n.y and n.x then
          local line = at[n.y] or {}
          at[n.y] = line
          local set = line[n.x] or {}
          line[n.x] = set
-         set[kind] = true
+         set[kind as NodeKind] = true
       end
-      for key, v in pairs(n) do
-         if type(v) == "table" and key ~= "parent" and not seen[v] then visit(v) end
+      for key, v in pairs(node) do
+         if v is {any:any} and key ~= "parent" and not seen[v] then visit(v) end
       end
    end
-   visit(ast)
+   visit(root as {any:any})
    return at
 end
 
-local NONE = {}
+local NONE: Kinds = {}
 
-local function is_function(t)
+local function is_function(t: TypeInfo): boolean
    return t ~= nil and (t.t == codes.FUNCTION or t.t == codes.POLY)
 end
 
-local function is_call(tokens, i)
+local function is_call(tokens: {Token}, i: integer): boolean
    local nxt = tokens[i + 1]
    return nxt ~= nil and (nxt.tk == "(" or nxt.tk == "{" or nxt.kind == "string")
 end
 
 -- The token type for a declared type: from its keyword, or for `type X =`,
 -- from what follows the `=`.
-local function declared_type_kind(tokens, i)
+local function declared_type_kind(tokens: {Token}, i: integer): TokenType
    local kind = TYPE_KEYWORDS[tokens[i - 1].tk]
    if kind == "type" and tokens[i + 1] and tokens[i + 1].tk == "=" and tokens[i + 2] then
       local rhs = TYPE_KEYWORDS[tokens[i + 2].tk]
@@ -82,7 +122,7 @@ local function declared_type_kind(tokens, i)
    return kind
 end
 
-local function type_kind(t)
+local function type_kind(t: TypeInfo): TokenType
    if not t then return "class" end
    if t.t == codes.ENUM then return "enum" end
    if t.t == codes.INTERFACE then return "interface" end
@@ -92,7 +132,7 @@ end
 
 -- "function" or "method" if tokens[i] is the name in a function declaration
 -- header (`function f(`, `local function f(`, `function a.b:c<T>(`), else nil.
-local function declared_function(tokens, i)
+local function declared_function(tokens: {Token}, i: integer): TokenType
    local nxt = tokens[i + 1]
    if not nxt or (nxt.tk ~= "(" and nxt.tk ~= "<") then return nil end
    local j = i - 1
@@ -106,24 +146,32 @@ end
 
 -- True if the name declared at dy:dx is followed by `<const>`. tl records
 -- `local function f` at `local`, so look for the name along the line.
-local function is_const(tokens, name, dy, dx)
+local function is_const(tokens: {Token}, name: string, dy: integer, dx: integer): boolean
    local d = lookup.token_at(tokens, dy, dx)
    while d and tokens[d] and tokens[d].y == dy and tokens[d].tk ~= name do d = d + 1 end
    if not d or not tokens[d] or tokens[d].y ~= dy then return false end
    return tokens[d + 1] ~= nil and tokens[d + 1].tk == "<" and tokens[d + 2] ~= nil and tokens[d + 2].tk == "const"
 end
 
-local Classifier = {}
-Classifier.__index = Classifier
+local record Classifier
+   tokens: {Token}
+   tr: TypeReport
+   path: string
+   symbols: {TypeReport.Symbol}
+   at: {integer:{integer:Kinds}}
+   chain: {integer:TokenType} -- token index -> type for the later names of a qualified type
+end
 
-function Classifier:kinds(y, x)
+local Classifier_mt: metatable<Classifier> = { __index = Classifier }
+
+function Classifier:kinds(y: integer, x: integer): Kinds
    local line = self.at[y]
    return line and line[x] or NONE
 end
 
 -- A name used as a value: a local (or parameter, or type) found through the
 -- file's scopes, else a global.
-function Classifier:reference(i)
+function Classifier:reference(i: integer): TokenType, integer
    local tokens, tr, tk = self.tokens, self.tr, self.tokens[i]
    local name = tk.tk
    local dy, dx, n = lookup.declaration(tr, self.path, name, tk.y, tk.x)
@@ -149,7 +197,7 @@ end
 -- A type annotation (`p: Player`, `img: love.graphics.Image`): its first
 -- name carries the `nominal` node. Every name of the dotted chain is a type,
 -- the last one being the type itself.
-function Classifier:type_reference(i)
+function Classifier:type_reference(i: integer): TokenType, integer
    local tokens = self.tokens
    local last = i
    while tokens[last + 1] and tokens[last + 1].tk == "." and tokens[last + 2]
@@ -164,7 +212,7 @@ end
 
 -- Returns the token type and modifier bits for the identifier at tokens[i],
 -- or nil to leave it to the TextMate grammar.
-function Classifier:classify(i)
+function Classifier:classify(i: integer): TokenType, integer
    local tokens, tk = self.tokens, self.tokens[i]
    local k = self:kinds(tk.y, tk.x)
    local prev, nxt = tokens[i - 1], tokens[i + 1]
@@ -210,7 +258,7 @@ end
 -- A file that doesn't parse still gets tokens for whatever tl made sense of.
 -- If nothing could be classified at all, the last result is returned again
 -- rather than dropping every color while the user types.
-function semantic.full(workspace, doc)
+function semantic.full(workspace: Workspace, doc: Workspace.Document): lsp.SemanticTokens
    local check = doc.check
    local tokens = check and check.tokens
    if not tokens then return doc.semantic_tokens or { data = json.array() } end
@@ -222,10 +270,10 @@ function semantic.full(workspace, doc)
       path = doc.path,
       symbols = tr.symbols_by_file[doc.path] or {},
       at = node_kinds(tokens, doc.path),
-      chain = {}, -- token index -> type for the later names of a qualified type
-   }, Classifier)
+      chain = {},
+   } as Classifier, Classifier_mt)
 
-   local data = json.array()
+   local data: {integer} = json.array()
    local line, col = 1, 1
    for i, tk in ipairs(tokens) do
       if tk.kind == "identifier" then
