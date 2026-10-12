@@ -4,7 +4,8 @@
     <vendor url="https://github.com/Spacylab/teal-intellij">Spacylab</vendor>
 
     <description><![CDATA[
-    <p>Teal (.tl) support for IntelliJ IDEA: syntax highlighting, inline diagnostics, hover, go-to-definition
+    <p>Teal (.tl) support for IntelliJ IDEA: syntax and semantic highlighting (locals, parameters, globals,
+    fields, functions and types, in your color scheme's standard colors), inline diagnostics, hover, go-to-definition
     (including from a <code>require</code> string to the module's file), type definition, completion, signature help,
     Find Usages (same-document), and a quick fix that adds the missing <code>require</code> for an unknown global
     type.</p>
@@ -12,7 +13,8 @@
     <a href="https://github.com/teal-language/tl">tl</a> compiler, run through
     <a href="https://github.com/redhat-developer/lsp4ij">LSP4IJ</a>. It needs Lua and the <code>tl</code> rock
     installed (<code>luarocks install tl</code>). Syntax highlighting reuses
-    <a href="https://github.com/teal-language/vscode-teal">vscode-teal</a>'s MIT-licensed TextMate grammar.</p>
+    <a href="https://github.com/teal-language/vscode-teal">vscode-teal</a>'s MIT-licensed TextMate grammar; semantic
+    highlighting comes from the bundled server.</p>
     ]]></description>
 
     <depends>com.intellij.modules.platform</depends>

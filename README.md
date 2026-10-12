@@ -1,8 +1,8 @@
 # Teal for IntelliJ
 
-A companion IntelliJ plugin bringing Teal (`.tl`) support to IntelliJ IDEA: syntax highlighting, inline diagnostics, hover, go-to-definition, completion, signature help, Find Usages and a missing-require quick fix. Architecture and rationale: [ADR 0001](docs/adr/0001-lsp-client-architecture-for-teal-plugin.md).
+A companion IntelliJ plugin bringing Teal (`.tl`) support to IntelliJ IDEA: syntax and semantic highlighting, inline diagnostics, hover, go-to-definition, completion, signature help, Find Usages and a missing-require quick fix. Architecture and rationale: [ADR 0001](docs/adr/0001-lsp-client-architecture-for-teal-plugin.md).
 
-Language intelligence comes from the Teal server, a small LSP server in plain Lua ([src/main/resources/teal-server/](src/main/resources/teal-server/)) built on the `tl` compiler as a library. The plugin bundles it and runs it through [LSP4IJ](https://github.com/redhat-developer/lsp4ij). Highlighting reuses [vscode-teal](https://github.com/teal-language/vscode-teal)'s MIT-licensed TextMate grammar.
+Language intelligence comes from the Teal server, a small LSP server in plain Lua ([src/main/resources/teal-server/](src/main/resources/teal-server/)) built on the `tl` compiler as a library. The plugin bundles it and runs it through [LSP4IJ](https://github.com/redhat-developer/lsp4ij). Highlighting has two layers: [vscode-teal](https://github.com/teal-language/vscode-teal)'s MIT-licensed TextMate grammar colors keywords, literals, function names and types as you type, and the Teal server's semantic highlighting then tells locals, parameters, globals, the standard library and fields apart. Both use the IDE's standard Language Defaults colors, so `.tl` files follow your color scheme the way Lua files do.
 
 ## Prerequisites
 
