@@ -58,6 +58,18 @@ abstract class CompileTeal @Inject constructor(private val exec: ExecOperations)
     @get:Internal
     abstract val projectDir: DirectoryProperty
 
+    /**
+     * For the server itself: also write `tl_pin.lua` (the pinned tl version,
+     * which the server checks at startup) and `files.txt` (every server
+     * script, which TealServerScripts extracts) next to cyan's output.
+     */
+    @get:Input
+    abstract val serverFiles: Property<Boolean>
+
+    init {
+        serverFiles.convention(false)
+    }
+
     @TaskAction
     fun compile() {
         val found = run("lua", "-e", "io.write(require('tl').version())", hint = "install Lua and `luarocks install tl ${tlVersion.get()}`")
@@ -67,6 +79,13 @@ abstract class CompileTeal @Inject constructor(private val exec: ExecOperations)
         // --update-all: Gradle already decided the sources changed, and cyan's own
         // mtime check misses edits made within the second of the last build.
         run("cyan", *cyanOptions.get().toTypedArray(), "build", "--update-all", "--prune", hint = "`luarocks install cyan`")
+
+        if (serverFiles.get()) {
+            val dir = outputDir.get().dir("teal-server").asFile
+            dir.resolve("tl_pin.lua").writeText("return \"${tlVersion.get()}\"\n")
+            val scripts = dir.listFiles { f -> f.name.endsWith(".lua") }!!.map { it.name }.sorted()
+            dir.resolve("files.txt").writeText(scripts.joinToString("\n", postfix = "\n"))
+        }
     }
 
     private fun run(vararg command: String, hint: String): String {
@@ -91,16 +110,17 @@ abstract class CompileTeal @Inject constructor(private val exec: ExecOperations)
 
 val compileTeal = tasks.register<CompileTeal>("compileTeal") {
     tlVersion = providers.gradleProperty("tlVersion")
-    sources.from("tlconfig.lua", "src/main/teal", "src/main/resources/teal-server")
+    sources.from("tlconfig.lua", "src/main/teal")
     outputDir = layout.buildDirectory.dir("generated/teal")
     projectDir = layout.projectDirectory
+    serverFiles = true
 }
 
 // The Lua unit tests, compiled against the server sources.
 val compileTealTest = tasks.register<CompileTeal>("compileTealTest") {
     tlVersion = providers.gradleProperty("tlVersion")
     cyanOptions = listOf("-s", "src/test/teal", "-b", "build/generated/teal-test/teal-server", "-I", "src/main/teal")
-    sources.from("tlconfig.lua", "src/test/teal", "src/main/teal", "src/main/resources/teal-server")
+    sources.from("tlconfig.lua", "src/test/teal", "src/main/teal")
     outputDir = layout.buildDirectory.dir("generated/teal-test")
     projectDir = layout.projectDirectory
 }

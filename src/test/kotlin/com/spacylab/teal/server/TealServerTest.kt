@@ -18,8 +18,8 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * Integration test for the Lua Teal server in `src/main/resources/teal-server`
- * (ADR 0001, third amendment), driven as a real `lua server.lua` process over
+ * Integration test for the Teal server in `src/main/teal` (ADR 0001, third
+ * amendment; compiled to Lua, ADR 0002), driven as a real `lua server.lua` process over
  * raw stdio. Skipped if `lua` isn't on PATH or can't load the `tl` rock.
  */
 @Timeout(30, unit = TimeUnit.SECONDS)
@@ -80,6 +80,27 @@ class TealServerTest {
             result.getAsJsonObject("serverInfo").get("version").asString.startsWith("tl "),
             "expected the tl version in serverInfo",
         )
+    }
+
+    @Test
+    fun `a tl older than the pinned version is refused at startup`() {
+        val lua = findOnPath("lua")
+        assumeTrue(lua != null, "lua not found on PATH; skipping")
+        scriptDir = File.createTempFile("teal-server-scripts", "").apply { delete() }
+        val script = TealServerScripts.extractTo(scriptDir)
+        val fakeTl = File(scriptDir, "fake").apply { mkdirs() }
+        File(fakeTl, "tl.lua").writeText("return { version = function() return \"0.0.1\" end }\n")
+
+        process = ProcessBuilder(lua, script.absolutePath)
+            .redirectErrorStream(true)
+            .apply { environment()["LUA_PATH"] = "${fakeTl.absolutePath}/?.lua;;" }
+            .start()
+        process.outputStream.close()
+        val output = process.inputStream.bufferedReader().readText()
+
+        assertTrue(process.waitFor(10, TimeUnit.SECONDS))
+        assertEquals(1, process.exitValue(), output)
+        assertTrue(output.contains("tl 0.0.1 is too old"), output)
     }
 
     @Test

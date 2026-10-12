@@ -88,6 +88,68 @@ local record lsp
       edit: WorkspaceEdit
    end
 
+   -- Request and notification params, as the dispatcher casts them.
+
+   record TextDocumentIdentifier
+      uri: string
+   end
+
+   record TextDocumentItem
+      uri: string
+      version: integer
+      text: string
+   end
+
+   record VersionedTextDocumentIdentifier
+      uri: string
+      version: integer
+   end
+
+   record WorkspaceFolder
+      uri: string
+   end
+
+   record InitializeParams
+      rootUri: string
+      rootPath: string
+      workspaceFolders: {WorkspaceFolder}
+   end
+
+   record TextDocumentParams
+      textDocument: TextDocumentIdentifier
+   end
+
+   record TextDocumentPositionParams
+      textDocument: TextDocumentIdentifier
+      position: Position
+   end
+
+   record ReferenceContext
+      includeDeclaration: boolean
+   end
+
+   record ReferenceParams
+      context: ReferenceContext
+   end
+
+   record CodeActionParams
+      textDocument: TextDocumentIdentifier
+      context: CodeActionContext
+   end
+
+   record DidOpenTextDocumentParams
+      textDocument: TextDocumentItem
+   end
+
+   record TextDocumentContentChangeEvent
+      text: string
+   end
+
+   record DidChangeTextDocumentParams
+      textDocument: VersionedTextDocumentIdentifier
+      contentChanges: {TextDocumentContentChangeEvent}
+   end
+
    severity: {DiagnosticSeverity:integer}
 end
 

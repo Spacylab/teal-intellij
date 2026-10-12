@@ -3,8 +3,6 @@
 return {
    source_dir = "src/main/teal",
    build_dir = "build/generated/teal/teal-server",
-   -- Server modules not ported to Teal yet. Removed once the port is done.
-   include_dir = { "src/main/resources/teal-server" },
    -- Plain Lua 5.1 runs on every interpreter the server supports (5.1 to 5.5,
    -- LuaJIT) without compat53.
    gen_target = "5.1",

@@ -12,13 +12,43 @@
 local script_dir = (arg and arg[0] or ""):match("^(.*)[/\\]") or "."
 package.path = script_dir .. "/?.lua;" .. package.path
 
-local ok_tl, tl = pcall(require, "tl")
-if not ok_tl then
-   io.stderr:write("teal-server: cannot load the tl library (luarocks install tl): ", tostring(tl), "\n")
+local function fail(...: string)
+   io.stderr:write("teal-server: ", table.concat({ ... }), "\n")
    os.exit(1)
 end
 
+local ok_tl, tl_err = pcall(require, "tl")
+if not ok_tl then
+   fail("cannot load the tl library (luarocks install tl): ", tostring(tl_err))
+end
+local tl = require("tl")
+
+-- The numeric parts of a version string: "0.24.8" -> {0, 24, 8}.
+local function version_parts(v: string): {integer}
+   local parts: {integer} = {}
+   for n in v:gmatch("%d+") do parts[#parts + 1] = tonumber(n) as integer end
+   return parts
+end
+
+local function older(a: string, b: string): boolean
+   local pa, pb = version_parts(a), version_parts(b)
+   for k = 1, math.max(#pa, #pb) do
+      local x, y = pa[k] or 0, pb[k] or 0
+      if x ~= y then return x < y end
+   end
+   return false
+end
+
+-- The server is type-checked against one tl version (ADR 0002). An older tl
+-- may lack what it relies on, so refuse it up front rather than fail on
+-- some request later. Newer versions are accepted.
+local pinned = require("tl_pin")
+if older(tl.version(), pinned) then
+   fail("tl ", tl.version(), " is too old, this server needs tl ", pinned, " or newer (luarocks install tl)")
+end
+
 local json = require("json")
+local lsp = require("lsp")
 local rpc = require("rpc")
 local uri = require("uri")
 local diagnostics = require("diagnostics")
@@ -26,14 +56,26 @@ local features = require("features")
 local semantic = require("semantic")
 local Workspace = require("workspace")
 
-local function log(...)
+local function log(...: string)
    io.stderr:write("teal-server: ", table.concat({ ... }), "\n")
 end
 
-local workspace
+-- A JSON-RPC message as it comes off the wire. `params` is cast to its LSP
+-- record by the handler for `method`.
+local record Message
+   method: string
+   id: rpc.Id
+   params: any
+end
+
+-- Handlers take the decoded params and return the result (requests) or
+-- nothing (notifications).
+local type Handler = function(params: any): any
+
+local workspace: Workspace
 local shutdown_requested = false
 
-local function publish(doc)
+local function publish(doc: Workspace.Document)
    local check = workspace:check(doc)
    rpc.notify("textDocument/publishDiagnostics", {
       uri = doc.uri,
@@ -46,7 +88,7 @@ local function publish_all()
    for _, doc in pairs(workspace.documents) do publish(doc) end
 end
 
-local function root_from(params)
+local function root_from(params: lsp.InitializeParams): string
    local root_uri = params.rootUri
    if root_uri == json.null then root_uri = nil end
    if not root_uri and type(params.workspaceFolders) == "table" and params.workspaceFolders[1] then
@@ -57,12 +99,12 @@ local function root_from(params)
    return nil
 end
 
-local requests = {}
-local notifications = {}
+local requests: {string:Handler} = {}
+local notifications: {string:Handler} = {}
 
-function requests.initialize(params)
-   workspace = Workspace.new(root_from(params), {
-      rebuild_every = tonumber(os.getenv("TEAL_SERVER_REBUILD_EVERY")),
+requests["initialize"] = function(params: any): any
+   workspace = Workspace.new(root_from(params as lsp.InitializeParams), {
+      rebuild_every = tonumber(os.getenv("TEAL_SERVER_REBUILD_EVERY")) as integer,
    })
    return {
       capabilities = {
@@ -87,18 +129,25 @@ function requests.initialize(params)
    }
 end
 
-function requests.shutdown()
+requests["shutdown"] = function(): any
    shutdown_requested = true
    return json.null
 end
 
+local function document(td: lsp.TextDocumentIdentifier): Workspace.Document
+   return td and workspace.documents[td.uri]
+end
+
 -- Requests about a position in an open document. A document the client
 -- never opened has nothing to answer with.
-local function positional(feature)
-   return function(params)
-      local doc = params.textDocument and workspace.documents[params.textDocument.uri]
-      if not doc or type(params.position) ~= "table" then return json.null end
-      local result = feature(workspace, doc, params.position)
+local type Positional = function(Workspace, Workspace.Document, lsp.Position): any
+
+local function positional(feature: Positional): Handler
+   return function(params: any): any
+      local p = params as lsp.TextDocumentPositionParams
+      local doc = document(p.textDocument)
+      if not doc or type(p.position) ~= "table" then return json.null end
+      local result = feature(workspace, doc, p.position)
       if result == nil then return json.null end
       return result
    end
@@ -110,40 +159,43 @@ requests["textDocument/typeDefinition"] = positional(features.type_definition)
 requests["textDocument/completion"] = positional(features.completion)
 requests["textDocument/signatureHelp"] = positional(features.signature_help)
 
-requests["textDocument/references"] = function(params)
-   local include = type(params.context) == "table" and params.context.includeDeclaration == true
-   return positional(function(ws, doc, position)
+requests["textDocument/references"] = function(params: any): any
+   local p = params as lsp.ReferenceParams
+   local include = type(p.context) == "table" and p.context.includeDeclaration == true
+   return positional(function(ws: Workspace, doc: Workspace.Document, position: lsp.Position): any
       return features.references(ws, doc, position, include)
    end)(params)
 end
 
-requests["textDocument/codeAction"] = function(params)
-   local doc = params.textDocument and workspace.documents[params.textDocument.uri]
+requests["textDocument/codeAction"] = function(params: any): any
+   local p = params as lsp.CodeActionParams
+   local doc = document(p.textDocument)
    if not doc then return json.array() end
-   return features.code_action(workspace, doc, params.context)
+   return features.code_action(workspace, doc, p.context)
 end
 
-requests["textDocument/semanticTokens/full"] = function(params)
-   local doc = params.textDocument and workspace.documents[params.textDocument.uri]
+requests["textDocument/semanticTokens/full"] = function(params: any): any
+   local doc = document((params as lsp.TextDocumentParams).textDocument)
    if not doc then return { data = json.array() } end
    return semantic.full(workspace, doc)
 end
 
-notifications["initialized"] = function() end
+notifications["initialized"] = function(): any end
 
-notifications["exit"] = function()
+notifications["exit"] = function(): any
    os.exit(shutdown_requested and 0 or 1)
 end
 
-notifications["textDocument/didOpen"] = function(params)
-   local td = params.textDocument
+notifications["textDocument/didOpen"] = function(params: any): any
+   local td = (params as lsp.DidOpenTextDocumentParams).textDocument
    local path = uri.to_path(td.uri) or td.uri
    publish(workspace:open(td.uri, path, td.text, td.version))
 end
 
-notifications["textDocument/didChange"] = function(params)
-   local td = params.textDocument
-   local changes = params.contentChanges
+notifications["textDocument/didChange"] = function(params: any): any
+   local p = params as lsp.DidChangeTextDocumentParams
+   local td = p.textDocument
+   local changes = p.contentChanges
    local text = changes[#changes] and changes[#changes].text
    if type(text) ~= "string" then return end
    if workspace:change(td.uri, text, td.version) then
@@ -153,18 +205,18 @@ notifications["textDocument/didChange"] = function(params)
    end
 end
 
-notifications["textDocument/didSave"] = function()
+notifications["textDocument/didSave"] = function(): any
    workspace:rebuild_env()
    publish_all()
 end
 
-notifications["textDocument/didClose"] = function(params)
-   local u = params.textDocument.uri
+notifications["textDocument/didClose"] = function(params: any): any
+   local u = (params as lsp.TextDocumentParams).textDocument.uri
    workspace:close(u)
    rpc.notify("textDocument/publishDiagnostics", { uri = u, diagnostics = json.array() })
 end
 
-local function handle(message)
+local function handle(message: Message)
    local method, id, params = message.method, message.id, message.params
    if params == json.null then params = nil end
    params = params or {}
@@ -203,6 +255,6 @@ while true do
    elseif message == nil then
       os.exit(shutdown_requested and 0 or 1)
    else
-      handle(message)
+      handle(message as Message)
    end
 end

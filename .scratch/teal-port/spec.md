@@ -1,6 +1,6 @@
 # Spec: port the Teal server to Teal
 
-Status: ready for a build session. Glossary in [CONTEXT.md](../../CONTEXT.md) (**Teal server**, **`tl`**, **`cyan`**). Decision recorded in [ADR 0002](../../docs/adr/0002-teal-server-written-in-teal.md).
+Status: done (all issues resolved). Glossary in [CONTEXT.md](../../CONTEXT.md) (**Teal server**, **`tl`**, **`cyan`**). Decision recorded in [ADR 0002](../../docs/adr/0002-teal-server-written-in-teal.md).
 
 ## Problem
 

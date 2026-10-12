@@ -3,24 +3,28 @@ package com.spacylab.teal.server
 import java.io.File
 
 /**
- * The Lua scripts of the Teal server (ADR 0001, third amendment), shipped as
- * resources under `/teal-server/`. Ported modules are compiled from
- * `src/main/teal/` at build time (ADR 0002). `lua` can't run them from inside
- * the plugin jar, so [extractTo] copies them into a real directory first.
+ * The Lua scripts of the Teal server (ADR 0001, third amendment), compiled
+ * from `src/main/teal/` at build time (ADR 0002) and shipped as resources
+ * under `/teal-server/`. `lua` can't run them from inside the plugin jar, so
+ * [extractTo] copies them into a real directory first.
  */
 object TealServerScripts {
     private const val RESOURCE_DIR = "/teal-server"
 
-    // Listed explicitly: a directory inside a jar can't be enumerated portably.
-    private val FILES = listOf("server.lua", "json.lua", "rpc.lua", "uri.lua", "lsp.lua", "diagnostics.lua", "workspace.lua", "lookup.lua", "features.lua", "requires.lua", "semantic.lua")
+    // A directory inside a jar can't be enumerated portably, so the build
+    // writes the list of scripts to files.txt.
+    private fun files(): List<String> =
+        resource("files.txt").bufferedReader().use { it.readLines() }.filter { it.isNotBlank() }
+
+    private fun resource(name: String) =
+        TealServerScripts::class.java.getResourceAsStream("$RESOURCE_DIR/$name")
+            ?: error("missing server resource $RESOURCE_DIR/$name")
 
     /** Copies every server script into [dir] and returns the entry point, `server.lua`. */
     fun extractTo(dir: File): File {
         dir.mkdirs()
-        for (name in FILES) {
-            val stream = TealServerScripts::class.java.getResourceAsStream("$RESOURCE_DIR/$name")
-                ?: error("missing server resource $RESOURCE_DIR/$name")
-            stream.use { input -> File(dir, name).outputStream().use { input.copyTo(it) } }
+        for (name in files()) {
+            resource(name).use { input -> File(dir, name).outputStream().use { input.copyTo(it) } }
         }
         return File(dir, "server.lua")
     }
