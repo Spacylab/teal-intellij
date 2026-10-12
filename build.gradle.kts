@@ -143,6 +143,7 @@ intellijPlatform {
         }
         changeNotes = """
             <ul>
+                <li>0.7.0: The language server is now written in Teal and type-checked against the <code>tl</code> library it runs on. It needs <code>tl</code> 0.24.8 or newer (<code>luarocks install tl</code>), and says so at startup instead of failing later. Lex errors, such as a stray character or an unterminated string, now show <code>tl</code>'s own message instead of "unexpected token 'nil'".</li>
                 <li>0.6.0: Richer highlighting. Declared function names, parameters and types get their own colors as you type, and the language server now tells locals, parameters, globals, <code>&lt;const&gt;</code> locals, the standard library and fields apart. Colors come from your scheme's standard Language Defaults, like Lua files.</li>
                 <li>0.5.1: Fixed the Teal file icon.</li>
                 <li>0.5.0: Teal support now comes from a language server bundled with the plugin, built on the <code>tl</code> compiler. It needs Lua and <code>luarocks install tl</code>; teal-language-server is no longer needed. Adds completion, signature help and type definition, better hover and go-to-definition, Find Usages on record fields, and spell-checking limited to comments and strings.</li>
