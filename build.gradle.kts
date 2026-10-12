@@ -43,11 +43,15 @@ abstract class CompileTeal @Inject constructor(private val exec: ExecOperations)
     @get:Input
     abstract val tlVersion: Property<String>
 
+    /** cyan options placed before `build`, overriding tlconfig.lua. */
+    @get:Input
+    abstract val cyanOptions: ListProperty<String>
+
     @get:InputFiles
     @get:PathSensitive(PathSensitivity.RELATIVE)
     abstract val sources: ConfigurableFileCollection
 
-    /** Must match `build_dir` in tlconfig.lua, minus its `teal-server` leaf (the resource path). */
+    /** The resource root: cyan's build dir (tlconfig.lua or `-b`) minus its `teal-server` leaf. */
     @get:OutputDirectory
     abstract val outputDir: DirectoryProperty
 
@@ -60,7 +64,9 @@ abstract class CompileTeal @Inject constructor(private val exec: ExecOperations)
         if (found != tlVersion.get()) {
             throw GradleException("tl $found found, but the build is pinned to tl ${tlVersion.get()} (tlVersion in gradle.properties): `luarocks install tl ${tlVersion.get()}`")
         }
-        run("cyan", "build", "--prune", hint = "`luarocks install cyan`")
+        // --update-all: Gradle already decided the sources changed, and cyan's own
+        // mtime check misses edits made within the second of the last build.
+        run("cyan", *cyanOptions.get().toTypedArray(), "build", "--update-all", "--prune", hint = "`luarocks install cyan`")
     }
 
     private fun run(vararg command: String, hint: String): String {
@@ -90,8 +96,21 @@ val compileTeal = tasks.register<CompileTeal>("compileTeal") {
     projectDir = layout.projectDirectory
 }
 
+// The Lua unit tests, compiled against the server sources.
+val compileTealTest = tasks.register<CompileTeal>("compileTealTest") {
+    tlVersion = providers.gradleProperty("tlVersion")
+    cyanOptions = listOf("-s", "src/test/teal", "-b", "build/generated/teal-test/teal-server", "-I", "src/main/teal")
+    sources.from("tlconfig.lua", "src/test/teal", "src/main/teal", "src/main/resources/teal-server")
+    outputDir = layout.buildDirectory.dir("generated/teal-test")
+    projectDir = layout.projectDirectory
+}
+
 sourceSets.main {
     resources.srcDir(compileTeal)
+}
+
+sourceSets.test {
+    resources.srcDir(compileTealTest)
 }
 
 intellijPlatform {

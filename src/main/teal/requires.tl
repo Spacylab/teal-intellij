@@ -3,7 +3,10 @@
 -- declaring a global X) and require targets (a require's module name -> its
 -- workspace file). Line scans, not parsing, as in tickets 04 and 05.
 
-local requires = {}
+local tl = require("tl")
+
+local record requires
+end
 
 local SEP = package.config:sub(1, 1)
 local WINDOWS = SEP == "\\"
@@ -13,25 +16,25 @@ local REQUIRE_CALL = "%f[%w_]require%s*%(?%s*[\"']([^\"']+)[\"']"
 
 -- Naive: a "--" inside a string also cuts the line, which at worst hides a
 -- require on that line.
-local function strip_comment(line)
+local function strip_comment(line: string): string
    local at = line:find("--", 1, true)
    return at and line:sub(1, at - 1) or line
 end
 
-local function lines(text)
-   local out = {}
+local function lines(text: string): {string}
+   local out: {string} = {}
    for line in (text .. "\n"):gmatch("([^\n]*)\n") do out[#out + 1] = line end
    return out
 end
 
 -- The type name in a typechecker `unknown type X` message, or nil.
-function requires.unknown_type_name(message)
+function requires.unknown_type_name(message: string): string
    return message:match("^%s*unknown type ([%a_][%w_]*)%s*$")
 end
 
 -- Module names passed to uncommented requires anywhere in text.
-function requires.required_modules(text)
-   local found = {}
+function requires.required_modules(text: string): {string:boolean}
+   local found: {string:boolean} = {}
    for _, line in ipairs(lines(text)) do
       for module in strip_comment(line):gmatch(REQUIRE_CALL) do found[module] = true end
    end
@@ -41,7 +44,7 @@ end
 -- The 0-based line for a new require: right after the last require of the
 -- file's leading block of requires (blank and comment lines may be
 -- interleaved), or 0 if the file doesn't start with any.
-function requires.insertion_line(text)
+function requires.insertion_line(text: string): integer
    local last = -1
    for index, raw in ipairs(lines(text)) do
       local line = strip_comment(raw):match("^%s*(.-)%s*$")
@@ -52,25 +55,25 @@ function requires.insertion_line(text)
    return last + 1
 end
 
-function requires.statement(module)
+function requires.statement(module: string): string
    return 'require("' .. module .. '")'
 end
 
-local function shell_quote(s)
+local function shell_quote(s: string): string
    if WINDOWS then return '"' .. s .. '"' end
    return "'" .. s:gsub("'", "'\\''") .. "'"
 end
 
 -- Every .tl file under root, skipping hidden directories. Plain Lua can't
 -- list directories, so this asks the OS.
-local function tl_files(root)
-   local cmd
+local function tl_files(root: string): {string}
+   local cmd: string
    if WINDOWS then
       cmd = "dir /s /b /a-d " .. shell_quote(root .. "\\*.tl") .. " 2>nul"
    else
       cmd = "find " .. shell_quote(root) .. " -mindepth 1 -name '.*' -prune -o -type f -name '*.tl' -print 2>/dev/null"
    end
-   local files = {}
+   local files: {string} = {}
    local pipe = io.popen(cmd)
    if not pipe then return files end
    for path in pipe:lines() do
@@ -82,7 +85,7 @@ local function tl_files(root)
    return files
 end
 
-local function declares_global(path, name)
+local function declares_global(path: string, name: string): boolean
    local f = io.open(path, "r")
    if not f then return false end
    for line in f:lines() do
@@ -99,8 +102,8 @@ end
 
 -- Workspace .tl files with a `global record|enum|interface|type <name>`
 -- declaration, excluding exclude_path. Scanned on demand; there's no index.
-function requires.find_global_declarations(root, name, exclude_path)
-   local found = {}
+function requires.find_global_declarations(root: string, name: string, exclude_path: string): {string}
+   local found: {string} = {}
    for _, path in ipairs(tl_files(root)) do
       if path ~= exclude_path and declares_global(path, name) then found[#found + 1] = path end
    end
@@ -108,7 +111,7 @@ function requires.find_global_declarations(root, name, exclude_path)
 end
 
 -- `<root>/src/entities/player.tl` -> `src.entities.player`.
-function requires.module_name(root, path)
+function requires.module_name(root: string, path: string): string
    local rel = path:sub(#root + 2)
    rel = rel:gsub("%.d%.tl$", ""):gsub("%.tl$", "")
    return (rel:gsub("[/\\]", "."))
@@ -116,7 +119,7 @@ end
 
 -- The module name of a require's string token, or nil if tokens[i] is not the
 -- argument of a require (`require("x")` or `require "x"`).
-function requires.module_at(tokens, i)
+function requires.module_at(tokens: {tl.Token}, i: integer): string
    local tk = tokens[i]
    if not tk or tk.kind ~= "string" then return nil end
    local prev = tokens[i - 1]
@@ -127,7 +130,7 @@ end
 
 -- The workspace file a module name resolves to: the first existing of
 -- <path>.tl, <path>.d.tl, <path>/init.tl, <path>.lua under root.
-function requires.resolve(root, module)
+function requires.resolve(root: string, module: string): string
    local base = root .. SEP .. module:gsub("%.", SEP)
    for _, suffix in ipairs({ ".tl", ".d.tl", SEP .. "init.tl", ".lua" }) do
       local f = io.open(base .. suffix, "r")

@@ -1,5 +1,5 @@
--- Unit tests for requires.lua, run by TealServerLuaTest as
--- `lua requires_test.lua <server scripts dir> <empty temp dir>`.
+-- Unit tests for requires.tl, compiled with cyan into test resources and run
+-- by TealServerLuaTest as `lua requires_test.lua <server scripts dir> <empty temp dir>`.
 -- Exits non-zero on the first failure, printing which check failed.
 
 local scripts, root = arg[1], arg[2]
@@ -8,7 +8,7 @@ local requires = require("requires")
 
 local SEP = package.config:sub(1, 1)
 
-local function check(name, cond, detail)
+local function check(name: string, cond: any, detail?: string)
    if not cond then
       io.stderr:write("FAIL: ", name, detail and (" -- " .. detail) or "", "\n")
       os.exit(1)
@@ -16,11 +16,11 @@ local function check(name, cond, detail)
    print("ok: " .. name)
 end
 
-local function eq(name, expected, actual)
+local function eq(name: string, expected: any, actual: any)
    check(name, expected == actual, "expected " .. tostring(expected) .. ", got " .. tostring(actual))
 end
 
-local function write(path, text)
+local function write(path: string, text: string): string
    local full = root .. SEP .. path:gsub("/", SEP)
    local dir = full:match("^(.*)[/\\]")
    os.execute((SEP == "\\" and 'mkdir "' .. dir .. '" 2>nul' or "mkdir -p '" .. dir .. "'"))
@@ -30,8 +30,8 @@ local function write(path, text)
    return full
 end
 
-local function modules(paths)
-   local out = {}
+local function modules(paths: {string}): string
+   local out: {string} = {}
    for k, p in ipairs(paths) do out[k] = requires.module_name(root, p) end
    return table.concat(out, ",")
 end
@@ -82,16 +82,16 @@ eq("inserts at line 0 when the file starts with no requires", 0,
 
 -- module_at: a require argument, quotes included; not other strings
 local tl = require("tl")
-local function module_at(line, col)
+local function module_at(line: string, col: integer): string
    local tokens = tl.lex(line, "x.tl")
    for i, tk in ipairs(tokens) do
       if tk.x <= col and col < tk.x + #tk.tk then return requires.module_at(tokens, i) end
    end
 end
 local line = [[local a, b = require("x.a"), require("x.b")]]
-eq("picks the require under the cursor", "x.b", module_at(line, line:find("x.b", 1, true)))
-eq("covers the opening quote", "x.a", module_at(line, line:find('"', 1, true)))
-eq("not the require keyword", nil, module_at(line, line:find("require", 1, true)))
+eq("picks the require under the cursor", "x.b", module_at(line, (line:find("x.b", 1, true))))
+eq("covers the opening quote", "x.a", module_at(line, (line:find('"', 1, true))))
+eq("not the require keyword", nil, module_at(line, (line:find("require", 1, true))))
 eq("the no-parens form", "a.b", module_at([[require "a.b"]], 10))
 eq("single quotes", "a.b", module_at([[require('a.b')]], 10))
 eq("not a string passed to anything else", nil, module_at([[print("src.engine.run")]], 10))

@@ -9,9 +9,9 @@ import java.io.File
 import java.util.concurrent.TimeUnit
 
 /**
- * Runs the Lua-level unit tests in `src/test/resources/teal-server/` against
- * the server's modules, for logic too fine-grained to reach through LSP
- * requests. Skipped if `lua` isn't on PATH or can't load the `tl` rock.
+ * Runs the unit tests in `src/test/teal/` (compiled to Lua test resources
+ * under `/teal-server/`) against the server's modules, for logic too
+ * fine-grained to reach through LSP requests. Skipped if `lua` isn't on PATH or can't load the `tl` rock.
  */
 @Timeout(30, unit = TimeUnit.SECONDS)
 class TealServerLuaTest {
