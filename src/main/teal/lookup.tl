@@ -3,24 +3,31 @@
 --
 -- Positions here are tl's: 1-based line (y) and byte column (x).
 --
--- The type report (`env.reporter:get_report()`) holds, per file:
+-- The type report (`env.reporter:get_report()`, typed as tl.TypeReport) holds,
+-- per file:
 --   by_pos[file][y][x]    type id of the expression starting at y:x. For
 --                         `a.b` and `a:b`, the member's type is at the `.`/`:`.
 --   symbols_by_file[file] declarations in source order as {y, x, name, type id},
 --                         with "@{"/"@}" entries opening and closing scopes.
--- and globally `globals[name]` and `types[id]` ({ t = typecode, str, file, y,
--- x, ref, fields, args, rets, types, enums, ... }).
+--                         A "@}" entry's 4th slot is the index of its "@{".
+-- and globally `globals[name]` and `types[id]` (tl.TypeInfo).
 
 local tl = require("tl")
 
-local lookup = {}
+local type Token = tl.Token
+local type TypeReport = tl.TypeReport
+local type TypeInfo = tl.TypeInfo
 
-local function before(ay, ax, by, bx)
+local record lookup
+   by_pos: function(tr: TypeReport, path: string, y: integer, x: integer): integer
+end
+
+local function before(ay: integer, ax: integer, by: integer, bx: integer): boolean
    return ay < by or (ay == by and ax < bx)
 end
 
 -- Index of the last token starting at or before y:x (binary search), or 0.
-local function last_starting_at_or_before(tokens, y, x)
+local function last_starting_at_or_before(tokens: {Token}, y: integer, x: integer): integer
    local lo, hi, found = 1, #tokens, 0
    while lo <= hi do
       local mid = math.floor((lo + hi) / 2)
@@ -35,7 +42,7 @@ local function last_starting_at_or_before(tokens, y, x)
 end
 
 -- Index of the token covering y:x, or nil.
-function lookup.token_at(tokens, y, x)
+function lookup.token_at(tokens: {Token}, y: integer, x: integer): integer
    local i = last_starting_at_or_before(tokens, y, x)
    local tk = tokens[i]
    if tk and tk.y == y and x < tk.x + #tk.tk and tk.kind ~= "$EOF$" then return i end
@@ -44,7 +51,7 @@ end
 
 -- Index of the last token starting strictly before y:x -- the token just left
 -- of a cursor placed at y:x -- or 0.
-function lookup.token_left_of(tokens, y, x)
+function lookup.token_left_of(tokens: {Token}, y: integer, x: integer): integer
    local i = last_starting_at_or_before(tokens, y, x)
    local tk = tokens[i]
    if tk and tk.y == y and tk.x == x then i = i - 1 end
@@ -53,7 +60,7 @@ function lookup.token_left_of(tokens, y, x)
 end
 
 -- True if a cursor at y:x sits inside or right at the end of token tk.
-function lookup.touches_cursor(tk, y, x)
+function lookup.touches_cursor(tk: Token, y: integer, x: integer): boolean
    return tk.y == y and tk.x + #tk.tk >= x
 end
 
@@ -61,7 +68,7 @@ end
 -- starts a method call or declaration (`a:b(...)`, `a:b "..."`, `a:b {...}`).
 -- A `:` followed by anything else is a type annotation (`local x: T`,
 -- `(a: T)`, `): T`), whose type name is not a member of what precedes it.
-function lookup.is_member_op(tokens, k)
+function lookup.is_member_op(tokens: {Token}, k: integer): boolean
    local tk = tokens[k]
    if not tk then return false end
    if tk.tk == "." then return true end
@@ -70,7 +77,7 @@ function lookup.is_member_op(tokens, k)
    return after ~= nil and (after.tk == "(" or after.tk == "{" or after.kind == "string")
 end
 
-function lookup.resolve(tr, id)
+function lookup.resolve(tr: TypeReport, id: integer): TypeInfo
    local seen = 0
    local t = id and tr.types[id]
    while t and t.ref and seen < 50 do
@@ -81,13 +88,13 @@ function lookup.resolve(tr, id)
 end
 
 -- The string library's type, whose fields are the methods of every string.
-function lookup.string_library(tr)
+function lookup.string_library(tr: TypeReport): TypeInfo
    return tr.types[tr.globals["string"]]
 end
 
 -- Fields of a value's type: its record/interface fields, or the string
 -- library for strings. Returns a name -> type id table, or nil.
-function lookup.fields_of(tr, id)
+function lookup.fields_of(tr: TypeReport, id: integer): {string:integer}
    local t = lookup.resolve(tr, id)
    if not t then return nil end
    -- tl.typecodes gives STRING and EMPTY_TABLE the same code; only a string
@@ -100,7 +107,7 @@ function lookup.fields_of(tr, id)
 end
 
 -- tl's type id for the expression or type annotation starting at y:x, or nil.
-local function by_pos(tr, path, y, x)
+local function by_pos(tr: TypeReport, path: string, y: integer, x: integer): integer
    local file = tr.by_pos[path]
    local line = file and file[y]
    return line and line[x]
@@ -110,7 +117,7 @@ lookup.by_pos = by_pos
 -- Names of the dotted chain ending at token i (`a.b:c` -> {"a", "b", "c"}),
 -- or nil if the chain starts with something other than a name (a call
 -- result, an index expression, a string literal...).
-function lookup.name_chain(tokens, i)
+function lookup.name_chain(tokens: {Token}, i: integer): {string}
    local names = { tokens[i].tk }
    while lookup.is_member_op(tokens, i - 1) do
       local prev = tokens[i - 2]
@@ -124,7 +131,7 @@ end
 -- Type id for a name chain, resolved by name the way teal-language-server
 -- does it: the first name through the scope at y:x (or the globals), the rest
 -- through record fields. Works on a stale report, since it matches names.
-function lookup.type_of_chain(tr, path, names, y, x)
+function lookup.type_of_chain(tr: TypeReport, path: string, names: {string}, y: integer, x: integer): integer
    local scope = tl.symbols_in_scope(tr, y, x, path)
    local id = scope[names[1]] or tr.globals[names[1]]
    for k = 2, #names do
@@ -137,10 +144,10 @@ end
 
 -- Type id of the identifier token at i: tl's own answer at that position
 -- when it has one, the name chain otherwise.
-function lookup.type_at_token(tr, path, tokens, i)
+function lookup.type_at_token(tr: TypeReport, path: string, tokens: {Token}, i: integer): integer
    local tk = tokens[i]
    local op = tokens[i - 1]
-   local id
+   local id: integer
    if lookup.is_member_op(tokens, i - 1) then
       id = by_pos(tr, path, op.y, op.x)
    else
@@ -158,7 +165,7 @@ end
 -- Where `name`, used at y:x, was declared in `path`: walks the file's
 -- declarations backward from y:x, skipping closed scopes. Returns y, x and
 -- the declaration's index in symbols_by_file[path], or nil.
-function lookup.declaration(tr, path, name, y, x)
+function lookup.declaration(tr: TypeReport, path: string, name: string, y: integer, x: integer): integer, integer, integer
    local symbols = tr.symbols_by_file[path]
    if not symbols then return nil end
 
@@ -188,7 +195,7 @@ end
 -- there: `function M:f(a: T, b?: U, ...: V)` -> {"self", "a", "b", "..."}.
 -- Returns nil when the declaration has no names (a function type such as
 -- `function(number): string`).
-function lookup.param_names(tokens, y, x)
+function lookup.param_names(tokens: {Token}, y: integer, x: integer): {string}
    local i = last_starting_at_or_before(tokens, y, x)
    if i == 0 then return nil end
 
@@ -201,7 +208,7 @@ function lookup.param_names(tokens, y, x)
    end
    if not tokens[i] then return nil end
 
-   local names = {}
+   local names: {string} = {}
    if method then names[1] = "self" end
    local depth = 0
    while tokens[i] do
