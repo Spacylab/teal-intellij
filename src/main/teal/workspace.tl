@@ -10,35 +10,86 @@
 
 local tl = require("tl")
 local uri = require("uri")
+local lsp = require("lsp")
 
-local Workspace = {}
-Workspace.__index = Workspace
+local type Token = tl.Token
+
+local record Workspace
+   -- The tlconfig.lua fields the server reads. The file is user code, so
+   -- nothing guarantees these types; tl gets the values as they are.
+   record Config
+      source_dir: string
+      include_dir: {string}
+      global_env_def: string
+      gen_compat: tl.GenCompat
+      gen_target: tl.GenTarget
+      disable_warnings: {string}
+      warning_error: {string}
+   end
+
+   -- The outcome of checking one document. `result` is nil only when lexing
+   -- failed (or when a file with parse errors made tl's check fail).
+   record Check
+      tokens: {Token}
+      lex_errors: {tl.Error}
+      parse_errors: {tl.Error}
+      result: tl.Result
+   end
+
+   record Document
+      uri: string
+      path: string
+      text: string
+      version: integer
+      check: Check
+      -- The last non-empty semantic tokens, kept by semantic.tl so colors
+      -- survive a check that classifies nothing.
+      semantic_tokens: lsp.SemanticTokens
+   end
+
+   record Options
+      rebuild_every: integer
+   end
+
+   root: string
+   config: Config
+   rebuild_every: integer
+   documents: {string:Document} -- by uri
+   edits_since_rebuild: integer
+   env: tl.Env
+   -- Tokens of files read from disk, as of this env; false if unreadable.
+   disk_tokens: {string:{Token} | boolean}
+
+   rebuild_env: function(self: Workspace)
+end
+
+local Workspace_mt: metatable<Workspace> = { __index = Workspace }
 
 local SEP = package.config:sub(1, 1)
 
-local function join(a, b)
+local function join(a: string, b: string): string
    if b:sub(1, 1) == "/" or b:match("^%a:[/\\]") then return b end
    return a .. SEP .. b
 end
 
-local function load_config(root)
+local function load_config(root: string): Workspace.Config
    local chunk = loadfile(join(root, "tlconfig.lua"))
    if not chunk then return {} end
    local ok, cfg = pcall(chunk)
-   if not ok or type(cfg) ~= "table" then return {} end
-   return cfg
+   if not ok or not cfg is table then return {} end
+   return cfg as Workspace.Config
 end
 
 -- tl finds required modules through `tl.path`, a package.path-style template
 -- list. Project directories come first; the interpreter's own package.path
 -- stays last so declaration files from installed rocks are still found.
-local function module_path(root, cfg)
-   local dirs = {}
+local function module_path(root: string, cfg: Workspace.Config): string
+   local dirs: {string} = {}
    for _, dir in ipairs(cfg.include_dir or {}) do dirs[#dirs + 1] = join(root, dir) end
    if cfg.source_dir then dirs[#dirs + 1] = join(root, cfg.source_dir) end
    dirs[#dirs + 1] = root
 
-   local entries = {}
+   local entries: {string} = {}
    for _, dir in ipairs(dirs) do
       entries[#entries + 1] = dir .. SEP .. "?.lua"
       entries[#entries + 1] = dir .. SEP .. "?" .. SEP .. "init.lua"
@@ -47,12 +98,12 @@ local function module_path(root, cfg)
    return table.concat(entries, ";")
 end
 
-function Workspace.new(root, opts)
-   local self = setmetatable({}, Workspace)
+function Workspace.new(root: string, opts?: Workspace.Options): Workspace
+   local self = setmetatable({} as Workspace, Workspace_mt)
    self.root = root
    self.config = root and load_config(root) or {}
    self.rebuild_every = opts and opts.rebuild_every or 100
-   self.documents = {} -- uri -> { uri, path, text, version }
+   self.documents = {}
    self.edits_since_rebuild = 0
    if root then tl.path = module_path(root, self.config) end
    self:rebuild_env()
@@ -72,49 +123,48 @@ function Workspace:rebuild_env()
    tl.check_string("", env, "bootstrap.tl")
    self.env = env
    self.edits_since_rebuild = 0
-   self.disk_tokens = {} -- path -> tokens of files read from disk, as of this env
+   self.disk_tokens = {}
 end
 
 -- Lexes, parses and type-checks one document's current text against the
 -- shared env, and keeps the outcome as `doc.check` for request handlers.
--- Returns { tokens, lex_errors, parse_errors, result }; result is nil only
--- when lexing failed.
 --
 -- A file with parse errors is still type-checked: tl checks whatever it could
 -- parse, so the type report stays current while the user is mid-edit. Its
 -- type errors are not reported (see diagnostics.lua). Checking a partial AST
 -- is not something tl promises to handle, hence the pcall.
-function Workspace:check(doc)
+function Workspace:check(doc: Workspace.Document): Workspace.Check
    local tokens, lex_errors = tl.lex(doc.text, doc.path)
-   local out = { tokens = tokens, lex_errors = lex_errors or {}, parse_errors = {} }
+   local out: Workspace.Check = { tokens = tokens, lex_errors = lex_errors or {}, parse_errors = {} }
    doc.check = out
    if #out.lex_errors > 0 then return out end
 
    local ast = tl.parse_program(tokens, out.parse_errors, doc.path)
    local lax = doc.path:sub(-4) == ".lua"
-   local ok, result = pcall(tl.check, ast, doc.path, { feat_lax = lax and "on" or "off", feat_arity = "on" }, self.env)
+   local opts: tl.CheckOptions = { feat_lax = lax and "on" or "off", feat_arity = "on" }
+   local ok, result = pcall(tl.check, ast, doc.path, opts, self.env)
    if ok then
-      out.result = result
+      out.result = result as tl.Result
    elseif #out.parse_errors == 0 then
       error(result, 0)
    end
    return out
 end
 
-function Workspace:type_report()
+function Workspace:type_report(): tl.TypeReport
    return self.env.reporter:get_report()
 end
 
-function Workspace:open(uri, path, text, version)
-   local doc = { uri = uri, path = path, text = text, version = version }
-   self.documents[uri] = doc
+function Workspace:open(u: string, path: string, text: string, version: integer): Workspace.Document
+   local doc: Workspace.Document = { uri = u, path = path, text = text, version = version }
+   self.documents[u] = doc
    return doc
 end
 
 -- Records an edit. Returns true when this edit crossed the rebuild threshold
 -- and the env was rebuilt, meaning every open document needs a re-check.
-function Workspace:change(uri, text, version)
-   local doc = self.documents[uri]
+function Workspace:change(u: string, text: string, version: integer): boolean
+   local doc = self.documents[u]
    if not doc then return false end
    doc.text, doc.version = text, version
    self.edits_since_rebuild = self.edits_since_rebuild + 1
@@ -125,17 +175,17 @@ function Workspace:change(uri, text, version)
    return false
 end
 
-function Workspace:close(u)
+function Workspace:close(u: string)
    self.documents[u] = nil
 end
 
-local function exists(path)
+local function exists(path: string): boolean
    local f = io.open(path, "r")
    if f then f:close() end
    return f ~= nil
 end
 
-local function read(path)
+local function read(path: string): string
    local f = io.open(path, "r")
    if not f then return nil end
    local text = f:read("*a")
@@ -143,7 +193,7 @@ local function read(path)
    return text
 end
 
-function Workspace:document_at(path)
+function Workspace:document_at(path: string): Workspace.Document
    for _, doc in pairs(self.documents) do
       if doc.path == path then return doc end
    end
@@ -152,7 +202,7 @@ end
 
 -- tl reports "" for the file being checked, and the paths it found modules
 -- at otherwise (absolute, since tl.path is built from absolute directories).
-function Workspace:absolute(file, from_doc)
+function Workspace:absolute(file: string, from_doc: Workspace.Document): string
    if file == nil then return nil end
    if file == "" then return from_doc.path end
    if self.root then return join(self.root, file) end
@@ -161,26 +211,29 @@ end
 
 -- Tokens of any file: an open document's current ones, or the file as it is
 -- on disk (lexed once per env, like the modules tl caches in it).
-function Workspace:tokens_of(file, from_doc)
+function Workspace:tokens_of(file: string, from_doc: Workspace.Document): {Token}
    local path = self:absolute(file, from_doc)
    local doc = path and self:document_at(path)
    if doc then return doc.check and doc.check.tokens end
    if not path then return nil end
-   if self.disk_tokens[path] == nil then
+   local cached = self.disk_tokens[path]
+   if cached == nil then
       local text = read(path)
-      self.disk_tokens[path] = text and tl.lex(text, path) or false
+      cached = text and tl.lex(text, path) or false
+      self.disk_tokens[path] = cached
    end
-   return self.disk_tokens[path] or nil
+   if cached is {Token} then return cached end
+   return nil
 end
 
 -- An LSP Location for a tl position, or nil if the file isn't a real one
 -- (tl reports "stdlib.d.tl" for standard library declarations).
-function Workspace:location(file, y, x, from_doc)
+function Workspace:location(file: string, y: integer, x: integer, from_doc: Workspace.Document): lsp.Location
    if not y or not x then return nil end
    local path = self:absolute(file, from_doc)
    if not path then return nil end
    local doc = self:document_at(path)
-   local target
+   local target: string
    if doc then
       target = doc.uri
    elseif exists(path) then
@@ -188,7 +241,7 @@ function Workspace:location(file, y, x, from_doc)
    else
       return nil
    end
-   local pos = { line = y - 1, character = x - 1 }
+   local pos: lsp.Position = { line = y - 1, character = x - 1 }
    return { uri = target, range = { start = pos, ["end"] = pos } }
 end
 

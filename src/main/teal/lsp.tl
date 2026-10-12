@@ -19,6 +19,15 @@ local record lsp
       "error" "warning"
    end
 
+   record Location
+      uri: string
+      range: Range
+   end
+
+   record SemanticTokens
+      data: {integer}
+   end
+
    record Diagnostic
       range: Range
       severity: integer

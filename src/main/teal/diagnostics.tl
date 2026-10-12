@@ -10,21 +10,9 @@ local tl = require("tl")
 local json = require("json")
 local lsp = require("lsp")
 
-local record diagnostics
-   -- What workspace's check of one document produced. `result` is nil only
-   -- when lexing failed.
-   record Check
-      tokens: {tl.Token}
-      lex_errors: {tl.Error}
-      parse_errors: {tl.Error}
-      result: tl.Result
-   end
+local type Workspace = require("workspace")
 
-   -- The tlconfig.lua fields that change how warnings are reported.
-   record WarningConfig
-      disable_warnings: {string}
-      warning_error: {string}
-   end
+local record diagnostics
 end
 
 local function diagnostic(tokens: {tl.Token}, err: tl.Error, severity: lsp.DiagnosticSeverity): lsp.Diagnostic
@@ -48,7 +36,7 @@ local function set_of(list: {string}): {string:boolean}
    return s
 end
 
-function diagnostics.from_check(check: diagnostics.Check, path: string, config: diagnostics.WarningConfig): {lsp.Diagnostic}
+function diagnostics.from_check(check: Workspace.Check, path: string, config: Workspace.Config): {lsp.Diagnostic}
    local out: {lsp.Diagnostic} = json.array()
 
    if #check.lex_errors > 0 then
