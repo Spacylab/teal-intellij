@@ -1,5 +1,6 @@
 package com.spacylab.teal.server
 
+import com.spacylab.teal.TealLuaRuntime
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
@@ -11,7 +12,8 @@ import java.util.concurrent.TimeUnit
 /**
  * Runs the unit tests in `src/test/teal/` (compiled to Lua test resources
  * under `/teal-server/`) against the server's modules, for logic too
- * fine-grained to reach through LSP requests. Skipped if `lua` isn't on PATH or can't load the `tl` rock.
+ * fine-grained to reach through LSP requests. Finds lua the way the plugin
+ * does ([TealLuaRuntime]); skipped only if no lua with the `tl` rock is found.
  */
 @Timeout(30, unit = TimeUnit.SECONDS)
 class TealServerLuaTest {
@@ -23,10 +25,9 @@ class TealServerLuaTest {
     fun `requires module`() = runLuaTest("requires_test.lua")
 
     private fun runLuaTest(name: String) {
-        val lua = System.getenv("PATH")?.split(File.pathSeparatorChar)
-            ?.map { File(it, "lua") }?.firstOrNull { it.canExecute() }?.absolutePath
-        assumeTrue(lua != null, "lua not found on PATH; skipping")
-        assumeTrue(ProcessBuilder(lua, "-e", "require('tl')").start().waitFor() == 0, "tl rock missing; skipping")
+        val result = TealLuaRuntime.resolve()
+        assumeTrue(result is TealLuaRuntime.Result.Found, "no lua with the tl rock here ($result); skipping")
+        val runtime = (result as TealLuaRuntime.Result.Found).runtime
 
         val scripts = File(tmp, "scripts")
         TealServerScripts.extractTo(scripts)
@@ -34,8 +35,9 @@ class TealServerLuaTest {
         javaClass.getResourceAsStream("/teal-server/$name")!!.use { input -> test.outputStream().use { input.copyTo(it) } }
         val root = File(tmp, "root").apply { mkdirs() }
 
-        val process = ProcessBuilder(lua, test.absolutePath, scripts.absolutePath, root.absolutePath)
+        val process = ProcessBuilder(runtime.lua, test.absolutePath, scripts.absolutePath, root.absolutePath)
             .redirectErrorStream(true)
+            .apply { environment().putAll(runtime.environment) }
             .start()
         val output = process.inputStream.bufferedReader().readText()
         process.waitFor()

@@ -1,4 +1,6 @@
 import java.io.ByteArrayOutputStream
+import java.io.File
+import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 
 plugins {
@@ -72,13 +74,14 @@ abstract class CompileTeal @Inject constructor(private val exec: ExecOperations)
 
     @TaskAction
     fun compile() {
-        val found = run("lua", "-e", "io.write(require('tl').version())", hint = "install Lua and `luarocks install tl ${tlVersion.get()}`")
+        val env = toolEnvironment("lua", "cyan")
+        val found = run(env, "lua", "-e", "io.write(require('tl').version())", hint = "install Lua and `luarocks install tl ${tlVersion.get()}`")
         if (found != tlVersion.get()) {
             throw GradleException("tl $found found, but the build is pinned to tl ${tlVersion.get()} (tlVersion in gradle.properties): `luarocks install tl ${tlVersion.get()}`")
         }
         // --update-all: Gradle already decided the sources changed, and cyan's own
         // mtime check misses edits made within the second of the last build.
-        run("cyan", *cyanOptions.get().toTypedArray(), "build", "--update-all", "--prune", hint = "`luarocks install cyan`")
+        run(env, "cyan", *cyanOptions.get().toTypedArray(), "build", "--update-all", "--prune", hint = "`luarocks install cyan`")
 
         if (serverFiles.get()) {
             val dir = outputDir.get().dir("teal-server").asFile
@@ -88,21 +91,58 @@ abstract class CompileTeal @Inject constructor(private val exec: ExecOperations)
         }
     }
 
-    private fun run(vararg command: String, hint: String): String {
+    /**
+     * The environment to run [tools] with. A Gradle daemon started by an IDE
+     * launched from the macOS Dock gets a minimal PATH (no /opt/homebrew/bin)
+     * and no LUA_PATH/LUA_CPATH from shell rc files (`luarocks --local`). When
+     * a tool isn't on this process's PATH, take PATH and the LUA_* variables
+     * from a login shell, the way the plugin finds lua at runtime
+     * (TealLuaRuntime).
+     */
+    private fun toolEnvironment(vararg tools: String): Map<String, String> {
+        val own = System.getenv()
+        if (tools.all { find(it, own) != null }) return own
+        val shell = loginShellEnvironment() ?: return own
+        return own + shell.filterKeys { it == "PATH" || it.startsWith("LUA_") }
+    }
+
+    private fun find(tool: String, env: Map<String, String>): String? =
+        env["PATH"].orEmpty().split(File.pathSeparator)
+            .map { File(it, tool) }
+            .firstOrNull { it.isFile && it.canExecute() }
+            ?.absolutePath
+
+    private fun loginShellEnvironment(): Map<String, String>? {
+        val shell = System.getenv("SHELL")?.takeIf { it.isNotBlank() } ?: "/bin/zsh"
+        return try {
+            val process = ProcessBuilder(shell, "-lc", "env").redirectErrorStream(false).start()
+            val output = process.inputStream.bufferedReader().readText()
+            if (!process.waitFor(10, TimeUnit.SECONDS) || process.exitValue() != 0) return null
+            output.lineSequence().filter { '=' in it }.associate { it.substringBefore('=') to it.substringAfter('=') }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    // ProcessBuilder resolves a bare command name against this process's PATH,
+    // not the child's, so the tool is resolved against `env` here.
+    private fun run(env: Map<String, String>, tool: String, vararg args: String, hint: String): String {
+        val command = listOf(find(tool, env) ?: tool) + args
         val out = ByteArrayOutputStream()
         val result = try {
             exec.exec {
-                commandLine(*command)
+                commandLine(command)
+                environment = env
                 workingDir = projectDir.get().asFile
                 standardOutput = out
                 errorOutput = out
                 isIgnoreExitValue = true
             }
         } catch (e: Exception) {
-            throw GradleException("cannot run `${command.first()}`: $hint", e)
+            throw GradleException("cannot run `$tool`: $hint", e)
         }
         if (result.exitValue != 0) {
-            throw GradleException("`${command.joinToString(" ")}` failed:\n$out")
+            throw GradleException("`${(listOf(tool) + args).joinToString(" ")}` failed:\n$out")
         }
         return out.toString().trim()
     }

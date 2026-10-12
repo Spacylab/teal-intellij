@@ -5,6 +5,7 @@ import com.google.gson.JsonArray
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import com.spacylab.teal.TealLuaRuntime
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -20,7 +21,9 @@ import java.util.concurrent.atomic.AtomicInteger
 /**
  * Integration test for the Teal server in `src/main/teal` (ADR 0001, third
  * amendment; compiled to Lua, ADR 0002), driven as a real `lua server.lua` process over
- * raw stdio. Skipped if `lua` isn't on PATH or can't load the `tl` rock.
+ * raw stdio. Finds lua the way the plugin does ([TealLuaRuntime]), so a Gradle
+ * daemon started by an IDE still runs it; skipped only if no lua with the `tl`
+ * rock can be found at all.
  */
 @Timeout(30, unit = TimeUnit.SECONDS)
 class TealServerTest {
@@ -33,18 +36,15 @@ class TealServerTest {
     private lateinit var scriptDir: File
 
     private fun start(env: Map<String, String> = emptyMap()): JsonObject {
-        val lua = findOnPath("lua")
-        assumeTrue(lua != null, "lua not found on PATH; skipping")
-        val tlLoads = ProcessBuilder(lua, "-e", "require('tl')").start().waitFor() == 0
-        assumeTrue(tlLoads, "the tl rock can't be loaded by lua; skipping")
+        val runtime = luaRuntime()
 
         projectRoot = File.createTempFile("teal-server-test", "").apply { delete(); mkdirs() }
         scriptDir = File.createTempFile("teal-server-scripts", "").apply { delete() }
         val script = TealServerScripts.extractTo(scriptDir)
 
-        process = ProcessBuilder(lua, script.absolutePath)
+        process = ProcessBuilder(runtime.lua, script.absolutePath)
             .redirectError(ProcessBuilder.Redirect.INHERIT)
-            .apply { environment().putAll(env) }
+            .apply { environment().putAll(runtime.environment + env) }
             .start()
         Thread({
             while (true) {
@@ -84,16 +84,15 @@ class TealServerTest {
 
     @Test
     fun `a tl older than the pinned version is refused at startup`() {
-        val lua = findOnPath("lua")
-        assumeTrue(lua != null, "lua not found on PATH; skipping")
+        val runtime = luaRuntime()
         scriptDir = File.createTempFile("teal-server-scripts", "").apply { delete() }
         val script = TealServerScripts.extractTo(scriptDir)
         val fakeTl = File(scriptDir, "fake").apply { mkdirs() }
         File(fakeTl, "tl.lua").writeText("return { version = function() return \"0.0.1\" end }\n")
 
-        process = ProcessBuilder(lua, script.absolutePath)
+        process = ProcessBuilder(runtime.lua, script.absolutePath)
             .redirectErrorStream(true)
-            .apply { environment()["LUA_PATH"] = "${fakeTl.absolutePath}/?.lua;;" }
+            .apply { environment().putAll(runtime.environment + ("LUA_PATH" to "${fakeTl.absolutePath}/?.lua;;")) }
             .start()
         process.outputStream.close()
         val output = process.inputStream.bufferedReader().readText()
@@ -867,9 +866,9 @@ class TealServerTest {
     private fun fileUri(file: File): String =
         URI("file", "", file.absolutePath.replace(File.separatorChar, '/'), null).toString()
 
-    private fun findOnPath(name: String): String? =
-        System.getenv("PATH")?.split(File.pathSeparatorChar)
-            ?.map { File(it, name) }
-            ?.firstOrNull { it.canExecute() }
-            ?.absolutePath
+    private fun luaRuntime(): TealLuaRuntime.Runtime {
+        val result = TealLuaRuntime.resolve()
+        assumeTrue(result is TealLuaRuntime.Result.Found, "no lua with the tl rock here ($result); skipping")
+        return (result as TealLuaRuntime.Result.Found).runtime
+    }
 }
