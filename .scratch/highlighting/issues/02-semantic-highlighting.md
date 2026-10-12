@@ -21,3 +21,26 @@ Add semantic highlighting to the Teal server: advertise `semanticTokensProvider`
 - `./gradlew buildPlugin` and the full test suite pass.
 
 ## Comments
+
+**2026-10-12: implemented, not yet committed. Manual IDE check still to do.**
+- `teal-server/semantic.lua` answers `textDocument/semanticTokens/full`. It re-parses the document's tokens and records tl's parser node kinds by position, which separates value names (`variable`), fields and declared names (`identifier`), parameters (`argument`) and type annotations (a `nominal` type at the first name). Values are then resolved through `symbols_by_file` (via `lookup.declaration`, which now also returns the symbol index), the globals, and field types.
+- **LSP4IJ 0.21.0's stock mapping doesn't fit the spec.** It has no global-variable key, it maps a plain `variable` to *Reassigned local variable*, and it honors `defaultLibrary` only on functions. So the plugin registers `TealSemanticTokensColorsProvider` (LSP4IJ's `semanticTokensColorsProvider` extension point, keyed by server id) with this table:
+
+  | Token | Key |
+  |---|---|
+  | any + `defaultLibrary` | Predefined symbol |
+  | `parameter` | Parameter |
+  | `variable` + `global` | Global variable |
+  | `variable` + `readonly` (`<const>`) | Constant |
+  | `variable` | Local variable |
+  | `property` | Instance field |
+  | `function` / `method` + `declaration` | Function declaration |
+  | `function` / `method` | Function call |
+  | `interface` | Interface name |
+  | `class` / `enum` / `type` | Class name |
+
+  `global` is a custom modifier that only our provider reads.
+- `getCenteredRowRect` in picolo-rpg classifies exactly like the compiled-Lua screenshot: the declared name is a function declaration, parameters are parameters, locals are locals, `love` is a global, `graphics` is a field, `getDimensions()` is a function call.
+- Performance on picolo-rpg's `main.tl` (1,655 lines, 4,041 identifiers classified): 17 ms per request (about 5 ms re-parse, 7 ms scope lookups, 5 ms node walk), against about 40 ms for the `tl` check of the same file on the same machine. That meets the 20 ms target, though not with much room.
+- The last-good fallback only kicks in when nothing at all could be classified. LSP4IJ doesn't shift a stale result to follow edits, so the "shifted" part of the spec isn't implemented; with `tl`'s error-tolerant parser the fallback is rarely needed.
+- Not classified (left to TextMate): generic type parameters (`<T>`), parameter names inside function *types*, built-in type names.

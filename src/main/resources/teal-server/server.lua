@@ -23,6 +23,7 @@ local rpc = require("rpc")
 local uri = require("uri")
 local diagnostics = require("diagnostics")
 local features = require("features")
+local semantic = require("semantic")
 local Workspace = require("workspace")
 
 local function log(...)
@@ -77,6 +78,10 @@ function requests.initialize(params)
          signatureHelpProvider = { triggerCharacters = { "(", "," } },
          referencesProvider = true,
          codeActionProvider = { codeActionKinds = { "quickfix" } },
+         semanticTokensProvider = {
+            legend = { tokenTypes = semantic.TOKEN_TYPES, tokenModifiers = semantic.TOKEN_MODIFIERS },
+            full = true,
+         },
       },
       serverInfo = { name = "teal-server", version = "tl " .. tl.version() },
    }
@@ -116,6 +121,12 @@ requests["textDocument/codeAction"] = function(params)
    local doc = params.textDocument and workspace.documents[params.textDocument.uri]
    if not doc then return json.array() end
    return features.code_action(workspace, doc, params.context)
+end
+
+requests["textDocument/semanticTokens/full"] = function(params)
+   local doc = params.textDocument and workspace.documents[params.textDocument.uri]
+   if not doc then return { data = json.array() } end
+   return semantic.full(workspace, doc)
 end
 
 notifications["initialized"] = function() end

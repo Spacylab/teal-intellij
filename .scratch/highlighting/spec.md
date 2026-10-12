@@ -15,7 +15,7 @@ Reference comparison: `getCenteredRowRect` in picolo-rpg, in Teal vs. its compil
 ## Decisions (settled, don't re-open)
 
 - **Two layers.** The bundled TextMate grammar is the instant, text-only base. Semantic highlighting from the Teal server (`textDocument/semanticTokens`) refines it with scope-aware classification.
-- **Colors come from the IDE's standard Language Defaults keys** (function declaration, local variable, parameter, global variable, instance field, class/type name, constant, predefined/default-library symbol), through LSP4IJ's stock semantic-token mapping. No Teal-specific color settings page. Nothing hard-coded (e.g. no forced underline): whatever the user's scheme does for Lua, Teal inherits.
+- **Colors come from the IDE's standard Language Defaults keys** (function declaration, local variable, parameter, global variable, instance field, class/type name, constant, predefined/default-library symbol), through a small `SemanticTokensColorsProvider` registered for the Teal server (LSP4IJ's stock mapping has no global-variable key and treats every plain variable as a reassigned local; found while implementing 02). No Teal-specific color settings page. Nothing hard-coded (e.g. no forced underline): whatever the user's scheme does for Lua, Teal inherits.
 - **Classified identifiers:** locals, parameters, globals, fields/methods, function declarations, type names (annotations, `record`/`enum`/`interface` names, generic arguments).
   - `<const>` locals: **Constant**. `<close>` locals: plain local.
   - Standard-library names (`print`, `string`, `math.floor`, …): **default library** style, distinct from user globals.

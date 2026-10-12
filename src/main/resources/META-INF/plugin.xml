@@ -39,5 +39,7 @@
             ]]></description>
         </server>
         <fileNamePatternMapping patterns="*.tl" serverId="tealLanguageServer" languageId="teal"/>
+        <semanticTokensColorsProvider serverId="tealLanguageServer"
+                                      class="com.spacylab.teal.TealSemanticTokensColorsProvider"/>
     </extensions>
 </idea-plugin>

@@ -540,9 +540,100 @@ class TealServerTest {
         assertTrue(at("textDocument/definition", uri, line = 0, character = 10).isJsonNull)
     }
 
+    // --- semantic highlighting ----------------------------------------------------------
+
+    @Test
+    fun `initialize advertises full semantic tokens with the legend`() {
+        val provider = start().getAsJsonObject("result").getAsJsonObject("capabilities")
+            .getAsJsonObject("semanticTokensProvider")
+        assertTrue(provider.get("full").asBoolean)
+        val legend = provider.getAsJsonObject("legend")
+        assertTrue(legend.getAsJsonArray("tokenTypes").map { it.asString }.containsAll(
+            listOf("class", "parameter", "variable", "property", "function", "method"),
+        ))
+        assertTrue(legend.getAsJsonArray("tokenModifiers").map { it.asString }.containsAll(
+            listOf("declaration", "readonly", "defaultLibrary", "global"),
+        ))
+    }
+
+    @Test
+    fun `semantic tokens classify each kind of identifier`() {
+        val tokens = startWithSemantic()
+        fun check(word: String, occurrence: Int, type: String, vararg modifiers: String) =
+            assertEquals(type to modifiers.toSet(), tokens.at(word, occurrence), "$word #$occurrence")
+
+        check("Player", 1, "class", "declaration")
+        check("name", 1, "property", "declaration")
+        check("update", 1, "method", "declaration")
+        check("LIMIT", 1, "variable", "declaration", "readonly")
+        check("counter", 1, "variable", "declaration", "global")
+        check("heal", 1, "function", "declaration")
+        check("p", 1, "parameter", "declaration")
+        check("Player", 3, "class")
+        check("total", 1, "variable", "declaration")
+        check("amount", 2, "parameter")
+        check("LIMIT", 2, "variable", "readonly")
+        check("counter", 2, "variable", "global")
+        check("print", 1, "function", "global", "defaultLibrary")
+        check("p", 2, "parameter")
+        check("name", 2, "property")
+        check("string", 2, "variable", "global", "defaultLibrary")
+        check("format", 1, "function")
+        check("update", 2, "method")
+        check("Player", 4, "class")
+        check("grow", 1, "method", "declaration")
+        check("self", 2, "parameter")
+        check("love", 1, "variable", "global")
+        check("graphics", 1, "property")
+        check("Image", 1, "class")
+    }
+
+    @Test
+    fun `semantic tokens still classify the valid part of a file that doesn't parse`() {
+        val tokens = startWithSemantic(SEMANTIC_MAIN + "local broken = \n")
+        assertEquals("function" to setOf("declaration"), tokens.at("heal", 1))
+        assertEquals("variable" to setOf("readonly"), tokens.at("LIMIT", 2))
+        assertEquals("property", tokens.at("name", 2)?.first)
+    }
+
     // --- helpers -----------------------------------------------------------------
 
     private companion object {
+        val SEMANTIC_LIB = """
+            global type love = record
+               type graphics = record
+                  type Image = record
+                     width: number
+                  end
+                  getDimensions: function(): number, number
+               end
+            end
+        """.trimIndent() + "\n"
+
+        val SEMANTIC_MAIN = """
+            require("lib")
+            local record Player
+              name: string
+              update: function(self: Player, dt: number)
+            end
+            local LIMIT <const> = 10
+            global counter: integer = 0
+            local function heal(p: Player, amount: number): boolean
+              local total = amount + LIMIT + counter
+              print(p.name, string.format("%d", total))
+              p:update(1)
+              return true
+            end
+            function Player:grow(x: number): number
+              return x + #self.name
+            end
+            local w, _h = love.graphics.getDimensions()
+            local function width(img: love.graphics.Image): number
+              return img.width + w
+            end
+            print(heal, width)
+        """.trimIndent() + "\n"
+
         const val MAIN_USING_DEP = "local dep = require(\"dep\")\nlocal n: integer = dep.value()\nprint(n)\n"
 
         val GEOMETRY = """
@@ -576,6 +667,40 @@ class TealServerTest {
         end
         return greet
     """.trimIndent()
+
+    private class SemanticTokens(private val text: String, private val byStart: Map<Pair<Int, Int>, Pair<String, Set<String>>>) {
+        /** Type and modifiers of the [occurrence]-th (1-based) `\bword\b` in the text, or null if unclassified. */
+        fun at(word: String, occurrence: Int): Pair<String, Set<String>>? {
+            val match = Regex("\\b${Regex.escape(word)}\\b").findAll(text).elementAtOrNull(occurrence - 1)
+                ?: error("'$word' #$occurrence not in the text")
+            val before = text.substring(0, match.range.first)
+            return byStart[before.count { it == '\n' } to match.range.first - (before.lastIndexOf('\n') + 1)]
+        }
+    }
+
+    private fun startWithSemantic(text: String = SEMANTIC_MAIN): SemanticTokens {
+        val provider = start().getAsJsonObject("result").getAsJsonObject("capabilities")
+            .getAsJsonObject("semanticTokensProvider").getAsJsonObject("legend")
+        val types = provider.getAsJsonArray("tokenTypes").map { it.asString }
+        val modifiers = provider.getAsJsonArray("tokenModifiers").map { it.asString }
+        File(projectRoot, "lib.d.tl").writeText(SEMANTIC_LIB)
+        val uri = open("main.tl", text)
+        diagnosticsFor(uri)
+
+        val response = request("textDocument/semanticTokens/full", mapOf("textDocument" to mapOf("uri" to uri)))
+        val data = response.getAsJsonObject("result").getAsJsonArray("data").map { it.asInt }
+        val byStart = mutableMapOf<Pair<Int, Int>, Pair<String, Set<String>>>()
+        var line = 0
+        var char = 0
+        for (k in data.indices step 5) {
+            if (data[k] > 0) char = 0
+            line += data[k]
+            char += data[k + 1]
+            val mods = modifiers.indices.filter { data[k + 4] and (1 shl it) != 0 }.map { modifiers[it] }.toSet()
+            byStart[line to char] = types[data[k + 3]] to mods
+        }
+        return SemanticTokens(text, byStart)
+    }
 
     private fun writeFile(path: String, text: String): File =
         File(projectRoot, path).apply { parentFile.mkdirs(); writeText(text) }

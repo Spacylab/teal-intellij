@@ -18,7 +18,7 @@ An existing third-party Language Server Protocol implementation for Teal ([teal-
 _Avoid_: "the server" (now means the [Teal server](#teal-server)).
 
 **Teal server**
-This project's own LSP server: plain Lua on top of the `tl` library, with no other dependency. It ships inside the companion plugin and runs with the user's `lua` interpreter. It provides all of the plugin's language intelligence: diagnostics, hover, go-to-definition (including [require targets](#require-target)), type definition, completion, signature help, Find Usages and the [missing-require quick fix](#missing-require-quick-fix).
+This project's own LSP server: plain Lua on top of the `tl` library, with no other dependency. It ships inside the companion plugin and runs with the user's `lua` interpreter. It provides all of the plugin's language intelligence: diagnostics, hover, go-to-definition (including [require targets](#require-target)), type definition, completion, signature help, Find Usages, the [missing-require quick fix](#missing-require-quick-fix) and [semantic highlighting](#semantic-highlighting).
 _Avoid_: "teal-language-server" (the third-party server it replaced), "the LSP" (a protocol, not a program).
 
 **`tl` env**

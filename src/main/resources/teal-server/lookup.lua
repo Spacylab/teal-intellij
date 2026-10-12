@@ -99,11 +99,13 @@ function lookup.fields_of(tr, id)
    return t.fields
 end
 
+-- tl's type id for the expression or type annotation starting at y:x, or nil.
 local function by_pos(tr, path, y, x)
    local file = tr.by_pos[path]
    local line = file and file[y]
    return line and line[x]
 end
+lookup.by_pos = by_pos
 
 -- Names of the dotted chain ending at token i (`a.b:c` -> {"a", "b", "c"}),
 -- or nil if the chain starts with something other than a name (a call
@@ -154,7 +156,8 @@ function lookup.type_at_token(tr, path, tokens, i)
 end
 
 -- Where `name`, used at y:x, was declared in `path`: walks the file's
--- declarations backward from y:x, skipping closed scopes. Returns y, x or nil.
+-- declarations backward from y:x, skipping closed scopes. Returns y, x and
+-- the declaration's index in symbols_by_file[path], or nil.
 function lookup.declaration(tr, path, name, y, x)
    local symbols = tr.symbols_by_file[path]
    if not symbols then return nil end
@@ -173,7 +176,7 @@ function lookup.declaration(tr, path, name, y, x)
       elseif s[3] == "@}" then
          n = s[4] -- jump to the matching "@{"
       elseif s[3] == name then
-         return s[1], s[2]
+         return s[1], s[2], n
       else
          n = n - 1
       end
