@@ -5,22 +5,28 @@
 -- JSON null decodes to `json.null`, so nulls inside arrays keep their slot.
 -- An empty Lua table is ambiguous, so it encodes as `{}` unless it was built
 -- with `json.array()`, which makes it encode as `[]`.
+--
+-- This is the one place untyped JSON enters the server: `decode` returns
+-- `any`, and callers cast it to the LSP records they expect.
 
-local json = {}
+local record json
+   -- A sentinel standing in for a JSON null of any type, so it is `any`.
+   null: any
+end
 
-json.null = setmetatable({}, { __tostring = function() return "null" end })
+json.null = setmetatable({}, { __tostring = function(): string return "null" end })
 
-local array_mt = { __jsontype = "array" }
+local array_mt: metatable<{any}> = { __jsontype = "array" } as metatable<{any}>
 
-function json.array(t)
-   return setmetatable(t or {}, array_mt)
+function json.array<T>(t?: {T}): {T}
+   return setmetatable(t or {}, array_mt as metatable<{T}>)
 end
 
 -- Decoding -------------------------------------------------------------------
 
-local escapes = { ['"'] = '"', ["\\"] = "\\", ["/"] = "/", b = "\b", f = "\f", n = "\n", r = "\r", t = "\t" }
+local escapes: {string:string} = { ['"'] = '"', ["\\"] = "\\", ["/"] = "/", b = "\b", f = "\f", n = "\n", r = "\r", t = "\t" }
 
-local function utf8_char(cp)
+local function utf8_char(cp: integer): string
    if cp < 0x80 then
       return string.char(cp)
    elseif cp < 0x800 then
@@ -33,34 +39,34 @@ local function utf8_char(cp)
    end
 end
 
-local decode_value
+local decode_value: function(string, integer): any, integer
 
-local function decode_error(str, pos, what)
+local function decode_error(pos: integer, what: string)
    error(string.format("json: %s at position %d", what, pos), 0)
 end
 
-local function skip_ws(str, pos)
+local function skip_ws(str: string, pos: integer): integer
    return str:find("[^ \t\r\n]", pos) or #str + 1
 end
 
-local function decode_string(str, pos)
+local function decode_string(str: string, pos: integer): string, integer
    -- pos is at the opening quote
-   local parts = {}
+   local parts: {string} = {}
    local i = pos + 1
    while true do
       local j = str:find('["\\]', i)
-      if not j then decode_error(str, pos, "unterminated string") end
+      if not j then decode_error(pos, "unterminated string") end
       parts[#parts + 1] = str:sub(i, j - 1)
       if str:sub(j, j) == '"' then
          return table.concat(parts), j + 1
       end
       local esc = str:sub(j + 1, j + 1)
       if esc == "u" then
-         local cp = tonumber(str:sub(j + 2, j + 5), 16)
-         if not cp then decode_error(str, j, "bad \\u escape") end
+         local cp = tonumber(str:sub(j + 2, j + 5), 16) as integer
+         if not cp then decode_error(j, "bad \\u escape") end
          local next_i = j + 6
          if cp >= 0xD800 and cp <= 0xDBFF and str:sub(next_i, next_i + 1) == "\\u" then
-            local low = tonumber(str:sub(next_i + 2, next_i + 5), 16)
+            local low = tonumber(str:sub(next_i + 2, next_i + 5), 16) as integer
             if low and low >= 0xDC00 and low <= 0xDFFF then
                cp = 0x10000 + (cp - 0xD800) * 0x400 + (low - 0xDC00)
                next_i = next_i + 6
@@ -70,55 +76,55 @@ local function decode_string(str, pos)
          i = next_i
       else
          local ch = escapes[esc]
-         if not ch then decode_error(str, j, "bad escape") end
+         if not ch then decode_error(j, "bad escape") end
          parts[#parts + 1] = ch
          i = j + 2
       end
    end
 end
 
-local function decode_array(str, pos)
-   local arr = json.array()
+local function decode_array(str: string, pos: integer): {any}, integer
+   local arr: {any} = json.array()
    local n = 0
    pos = skip_ws(str, pos + 1)
    if str:sub(pos, pos) == "]" then return arr, pos + 1 end
    while true do
-      local v
+      local v: any
       v, pos = decode_value(str, pos)
       n = n + 1
       arr[n] = v
       pos = skip_ws(str, pos)
       local c = str:sub(pos, pos)
       if c == "]" then return arr, pos + 1 end
-      if c ~= "," then decode_error(str, pos, "expected ',' or ']'") end
+      if c ~= "," then decode_error(pos, "expected ',' or ']'") end
       pos = skip_ws(str, pos + 1)
    end
 end
 
-local function decode_object(str, pos)
-   local obj = {}
+local function decode_object(str: string, pos: integer): {string:any}, integer
+   local obj: {string:any} = {}
    pos = skip_ws(str, pos + 1)
    if str:sub(pos, pos) == "}" then return obj, pos + 1 end
    while true do
-      if str:sub(pos, pos) ~= '"' then decode_error(str, pos, "expected string key") end
-      local key
+      if str:sub(pos, pos) ~= '"' then decode_error(pos, "expected string key") end
+      local key: string
       key, pos = decode_string(str, pos)
       pos = skip_ws(str, pos)
-      if str:sub(pos, pos) ~= ":" then decode_error(str, pos, "expected ':'") end
-      local v
+      if str:sub(pos, pos) ~= ":" then decode_error(pos, "expected ':'") end
+      local v: any
       v, pos = decode_value(str, skip_ws(str, pos + 1))
       obj[key] = v
       pos = skip_ws(str, pos)
       local c = str:sub(pos, pos)
       if c == "}" then return obj, pos + 1 end
-      if c ~= "," then decode_error(str, pos, "expected ',' or '}'") end
+      if c ~= "," then decode_error(pos, "expected ',' or '}'") end
       pos = skip_ws(str, pos + 1)
    end
 end
 
-local literals = { ["true"] = true, ["false"] = false, ["null"] = json.null }
+local literals: {string:any} = { ["true"] = true, ["false"] = false, ["null"] = json.null }
 
-decode_value = function(str, pos)
+decode_value = function(str: string, pos: integer): any, integer
    pos = skip_ws(str, pos)
    local c = str:sub(pos, pos)
    if c == "{" then return decode_object(str, pos) end
@@ -127,26 +133,26 @@ decode_value = function(str, pos)
    local num = str:match("^-?%d+%.?%d*[eE]?[-+]?%d*", pos)
    if num and #num > 0 then
       local v = tonumber(num)
-      if v == nil then decode_error(str, pos, "bad number") end
+      if v == nil then decode_error(pos, "bad number") end
       return v, pos + #num
    end
    for word, v in pairs(literals) do
       if str:sub(pos, pos + #word - 1) == word then return v, pos + #word end
    end
-   decode_error(str, pos, "unexpected character")
+   decode_error(pos, "unexpected character")
 end
 
-function json.decode(str)
+function json.decode(str: string): any
    local v, pos = decode_value(str, 1)
    pos = skip_ws(str, pos)
-   if pos <= #str then decode_error(str, pos, "trailing data") end
+   if pos <= #str then decode_error(pos, "trailing data") end
    return v
 end
 
 -- Encoding -------------------------------------------------------------------
 
-local function encode_string(s)
-   return '"' .. s:gsub('[%c"\\]', function(ch)
+local function encode_string(s: string): string
+   return '"' .. s:gsub('[%c"\\]', function(ch: string): string
       if ch == '"' then return '\\"' end
       if ch == "\\" then return "\\\\" end
       if ch == "\n" then return "\\n" end
@@ -156,24 +162,25 @@ local function encode_string(s)
    end) .. '"'
 end
 
-local function is_array(t)
-   if getmetatable(t) == array_mt then return true end
-   local n = #t
+local function is_array(t: {any:any}): boolean
+   if getmetatable(t as {any}) == array_mt then return true end
+   local n = #(t as {any})
    if n == 0 then return false end
    for k in pairs(t) do
-      if type(k) ~= "number" or k < 1 or k > n or k % 1 ~= 0 then return false end
+      if not k is number or k < 1 or k > n or k % 1 ~= 0 then return false end
    end
    return true
 end
 
-local encode_value
+local encode_value: function(any, {string})
 
-local function encode_table(t, out)
+local function encode_table(t: {any:any}, out: {string})
    if is_array(t) then
+      local arr = t as {any}
       out[#out + 1] = "["
-      for i = 1, #t do
+      for i = 1, #arr do
          if i > 1 then out[#out + 1] = "," end
-         encode_value(t[i], out)
+         encode_value(arr[i], out)
       end
       out[#out + 1] = "]"
    else
@@ -190,31 +197,30 @@ local function encode_table(t, out)
    end
 end
 
-encode_value = function(v, out)
-   local tv = type(v)
+encode_value = function(v: any, out: {string})
    if v == nil or v == json.null then
       out[#out + 1] = "null"
-   elseif tv == "boolean" then
+   elseif v is boolean then
       out[#out + 1] = v and "true" or "false"
-   elseif tv == "number" then
+   elseif v is number then
       if v ~= v or v == math.huge or v == -math.huge then
          out[#out + 1] = "null"
-      elseif v % 1 == 0 and v > -2 ^ 53 and v < 2 ^ 53 then
-         out[#out + 1] = string.format("%d", v)
+      elseif v % 1 == 0 and v > -(2 ^ 53) and v < 2 ^ 53 then
+         out[#out + 1] = string.format("%d", v as integer)
       else
          out[#out + 1] = string.format("%.17g", v)
       end
-   elseif tv == "string" then
+   elseif v is string then
       out[#out + 1] = encode_string(v)
-   elseif tv == "table" then
+   elseif v is {any:any} then
       encode_table(v, out)
    else
-      error("json: cannot encode a " .. tv, 0)
+      error("json: cannot encode a " .. type(v), 0)
    end
 end
 
-function json.encode(v)
-   local out = {}
+function json.encode(v: any): string
+   local out: {string} = {}
    encode_value(v, out)
    return table.concat(out)
 end

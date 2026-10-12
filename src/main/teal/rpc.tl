@@ -4,20 +4,23 @@
 
 local json = require("json")
 
-local rpc = {}
+local record rpc
+   -- A JSON-RPC request or response id.
+   type Id = integer | string
+end
 
 local input, output = io.stdin, io.stdout
 
 -- Returns the decoded message, or nil at end of input.
-function rpc.read()
-   local length
+function rpc.read(): any
+   local length: integer
    while true do
       local line = input:read("*l")
       if line == nil then return nil end
       line = line:gsub("\r$", "")
       if line == "" then break end
       local value = line:match("^[Cc]ontent%-[Ll]ength:%s*(%d+)")
-      if value then length = tonumber(value) end
+      if value then length = tonumber(value) as integer end
    end
    if not length then return nil end
    local body = input:read(length)
@@ -25,22 +28,22 @@ function rpc.read()
    return json.decode(body)
 end
 
-function rpc.write(message)
+function rpc.write(message: {string:any})
    message.jsonrpc = "2.0"
    local body = json.encode(message)
    output:write("Content-Length: ", #body, "\r\n\r\n", body)
    output:flush()
 end
 
-function rpc.respond(id, result)
+function rpc.respond(id: rpc.Id, result: any)
    rpc.write({ id = id, result = result == nil and json.null or result })
 end
 
-function rpc.respond_error(id, code, message)
+function rpc.respond_error(id: rpc.Id, code: integer, message: string)
    rpc.write({ id = id, error = { code = code, message = message } })
 end
 
-function rpc.notify(method, params)
+function rpc.notify(method: string, params: any)
    rpc.write({ method = method, params = params })
 end
 
